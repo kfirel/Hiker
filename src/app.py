@@ -145,10 +145,13 @@ if __name__ == '__main__':
         
         # Start Flask app
         logger.info(f"Starting WhatsApp Bot on port {Config.FLASK_PORT}")
+        # Run Flask with auto-reload enabled by default
+        # Set FLASK_DEBUG=False in .env to disable for production
         app.run(
             host='0.0.0.0',
             port=Config.FLASK_PORT,
-            debug=False
+            debug=Config.FLASK_DEBUG,
+            use_reloader=Config.FLASK_DEBUG  # Auto-reload on file changes
         )
         
     except ValueError as e:

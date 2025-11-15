@@ -108,11 +108,13 @@ NGROK_AUTHTOKEN=your_ngrok_token
 # הרצת ngrok (בטרמינל נפרד)
 python scripts/start_ngrok.py
 
-# הרצת הבוט
+# הרצת הבוט (עם auto-reload!)
 python src/app.py
 ```
 
 🎉 **הבוט פועל!** עכשיו הגדר את ה-webhook ב-Meta Developer Console.
+
+💡 **Auto-Reload מופעל כברירת מחדל** - הבוט יטען מחדש אוטומטית כשאתה משנה קוד!
 
 ---
 
@@ -169,6 +171,7 @@ Hiker/
 - 🔗 [**docs/FIND_WEBHOOK_IN_META.md**](docs/FIND_WEBHOOK_IN_META.md) - הגדרת webhook
 - 🔘 [**docs/INTERACTIVE_BUTTONS_GUIDE.md**](docs/INTERACTIVE_BUTTONS_GUIDE.md) - כפתורים אינטראקטיביים
 - ✅ [**docs/VALIDATION_GUIDE.md**](docs/VALIDATION_GUIDE.md) - מנגנון האימות
+- 🔄 [**docs/AUTO_RELOAD_GUIDE.md**](docs/AUTO_RELOAD_GUIDE.md) - Auto-reload בפיתוח
 - 💡 [**docs/QUICK_REFERENCE.md**](docs/QUICK_REFERENCE.md) - עזר מהיר
 
 ---
