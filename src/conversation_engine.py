@@ -97,12 +97,13 @@ class ConversationEngine:
             # Set last_state to the new state (message was already shown in response)
             self.user_db.set_user_state(phone_number, next_state, {'last_state': next_state})
             
-            # If next state has automatic message, append it
+            # If next state has automatic message, append it (but ONLY if not already in response)
             next_state_def = self.flow['states'].get(next_state)
             if next_state_def and not next_state_def.get('expected_input'):
                 # Automatic state (no input needed), process it immediately
                 next_message = self._get_state_message(phone_number, next_state_def)
-                if next_message:
+                # Check if message isn't already in response (avoid duplicates)
+                if next_message and next_message.strip() not in response:
                     response = f"{response}\n\n{next_message}"
                     # Update log_state to the auto next state
                     log_state = next_state_def.get('id', log_state)
