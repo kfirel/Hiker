@@ -87,11 +87,12 @@ class ConversationEngine:
             response, next_state = result
             buttons = None
         
-        # Log bot response
-        current_state = self.user_db.get_user_state(phone_number)
-        self.user_logger.log_bot_response(phone_number, response, current_state, buttons)
+        # Determine which state to log
+        # If moving to next_state, log that state (since message is for next state)
+        # Otherwise, log current state
+        log_state = next_state if next_state else current_state_id
         
-        # Move to next state
+        # Move to next state BEFORE logging (so log shows correct state)
         if next_state:
             # Set last_state to the new state (message was already shown in response)
             self.user_db.set_user_state(phone_number, next_state, {'last_state': next_state})
@@ -103,15 +104,21 @@ class ConversationEngine:
                 next_message = self._get_state_message(phone_number, next_state_def)
                 if next_message:
                     response = f"{response}\n\n{next_message}"
+                    # Update log_state to the auto next state
+                    log_state = next_state_def.get('id', log_state)
                     
                     # Check if there's another next state
                     auto_next_state = self._get_next_state(phone_number, next_state_def, None)
                     if auto_next_state:
                         self.user_db.set_user_state(phone_number, auto_next_state, {'last_state': auto_next_state})
+                        log_state = auto_next_state  # Update log state to auto next
                         # Get buttons for the auto next state
                         auto_next_state_def = self.flow['states'].get(auto_next_state)
                         if auto_next_state_def:
                             buttons = self._build_buttons(auto_next_state_def)
+        
+        # Log bot response with the correct state (after all transitions)
+        self.user_logger.log_bot_response(phone_number, response, log_state, buttons)
         
         return response, buttons
     
@@ -519,14 +526,15 @@ class ConversationEngine:
     
     def _handle_restart(self, phone_number: str) -> Tuple[str, Optional[str], Optional[list]]:
         """Handle restart action - full user data reset"""
-        # Log restart event
+        # Log restart event BEFORE clearing (so it's saved)
         self.user_logger.log_event(phone_number, 'restart', {'reason': 'user_requested'})
         
         # Delete all user data to start fresh
         self.user_db.delete_user_data(phone_number)
         
-        # Clear user logs
-        self.user_logger.clear_user_logs(phone_number)
+        # Note: We keep the logs (don't delete) so we have history
+        # If you want to delete logs on restart, uncomment the next line:
+        # self.user_logger.clear_user_logs(phone_number)
         
         # Create fresh user (this ensures user exists in database)
         self.user_db.create_user(phone_number)
@@ -560,15 +568,8 @@ class ConversationEngine:
                 return ("חזרה אחורה (לא מוטמע עדיין)", None)
             
             elif command == 'restart':
-                self.user_db.reset_user_state(phone_number)
-                initial_state = self.flow['states']['initial']
-                
-                # Initial state is a routing state, get the actual first state
-                next_state = initial_state.get('next_state', 'ask_full_name')
-                next_state_def = self.flow['states'].get(next_state)
-                message = self._get_state_message(phone_number, next_state_def)
-                buttons = self._build_buttons(next_state_def)
-                self.user_db.set_user_state(phone_number, next_state, {'last_state': next_state})
+                # Use the centralized restart handler which logs the event
+                message, next_state, buttons = self._handle_restart(phone_number)
                 return (message, buttons)
             
             elif command == 'delete_data':

@@ -89,9 +89,9 @@ class UserLogger:
             except (KeyError, TypeError) as e:
                 log_entry['buttons'] = [f'(error parsing buttons: {e})']
         
-        # Write to log file in readable format
+        # Write to log file in readable format (unbuffered for immediate write)
         try:
-            with open(log_file, 'a', encoding='utf-8') as f:
+            with open(log_file, 'a', encoding='utf-8', buffering=1) as f:
                 # Write separator for readability
                 f.write('─' * 80 + '\n')
                 
@@ -123,6 +123,7 @@ class UserLogger:
                     f.write(f"🔘 Buttons: {', '.join(log_entry['buttons'])}\n")
                 
                 f.write('\n')  # Extra line for spacing
+                f.flush()  # Force write to disk immediately
         except Exception as e:
             # Don't let logging errors break the app
             logging.error(f"Failed to write to user log: {e}")
@@ -161,7 +162,7 @@ class UserLogger:
         timestamp = datetime.now().isoformat()
         
         try:
-            with open(log_file, 'a', encoding='utf-8') as f:
+            with open(log_file, 'a', encoding='utf-8', buffering=1) as f:
                 # Write separator for readability
                 f.write('═' * 80 + '\n')
                 f.write(f"⏰ {timestamp}\n")
@@ -173,6 +174,7 @@ class UserLogger:
                         f.write(f"   • {key}: {value}\n")
                 
                 f.write('═' * 80 + '\n\n')
+                f.flush()  # Force write to disk immediately
         except Exception as e:
             logging.error(f"Failed to write event to user log: {e}")
     

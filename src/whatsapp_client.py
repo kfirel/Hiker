@@ -84,13 +84,27 @@ class WhatsAppClient:
         # Build buttons array (max 3)
         button_components = []
         for btn in buttons[:3]:  # Limit to 3 buttons
-            button_components.append({
-                'type': 'reply',
-                'reply': {
-                    'id': btn['id'],
-                    'title': btn['title'][:20]  # Max 20 chars for button title
-                }
-            })
+            # Support both formats: {'id': '...', 'title': '...'} and {'type': 'reply', 'reply': {...}}
+            if 'type' in btn and btn['type'] == 'reply':
+                # Already in correct format
+                button_components.append(btn)
+            elif 'id' in btn and 'title' in btn:
+                # Simple format, convert to WhatsApp format
+                button_components.append({
+                    'type': 'reply',
+                    'reply': {
+                        'id': btn['id'],
+                        'title': btn['title'][:20]  # Max 20 chars for button title
+                    }
+                })
+            elif 'reply' in btn:
+                # Already has 'reply' key, just add type
+                button_components.append({
+                    'type': 'reply',
+                    'reply': btn['reply']
+                })
+            else:
+                logger.warning(f"Skipping invalid button format: {btn}")
         
         payload = {
             'messaging_product': 'whatsapp',
@@ -109,6 +123,9 @@ class WhatsAppClient:
         }
         
         try:
+            logger.info(f"Sending button message to {to_phone_number} with {len(button_components)} buttons")
+            logger.debug(f"Button payload: {payload}")
+            
             response = requests.post(self.api_url, json=payload, headers=headers)
             response.raise_for_status()
             
@@ -117,8 +134,9 @@ class WhatsAppClient:
             
         except requests.exceptions.RequestException as e:
             logger.error(f"Failed to send button message to {to_phone_number}: {str(e)}")
-            if hasattr(e.response, 'text'):
+            if hasattr(e, 'response') and hasattr(e.response, 'text'):
                 logger.error(f"Response: {e.response.text}")
+            logger.error(f"Failed payload: {payload}")
             return False
     
     def send_list_message(self, to_phone_number, message_text, list_items):

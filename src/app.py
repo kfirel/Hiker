@@ -117,6 +117,13 @@ def process_message(message, value):
         response, buttons = conversation_engine.process_message(from_number, message_text)
         
         if response:
+            # Log the response and buttons
+            if buttons:
+                logger.info(f"Response with {len(buttons)} buttons: {response[:100]}...")
+                logger.debug(f"Buttons: {buttons}")
+            else:
+                logger.info(f"Response without buttons: {response[:100]}...")
+            
             # Send response with optional buttons
             success = whatsapp_client.send_message(from_number, response, buttons=buttons)
             if success:
