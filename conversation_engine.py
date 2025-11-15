@@ -148,9 +148,32 @@ class ConversationEngine:
         elif expected_input == 'text':
             # Handle text input (returns 2 values: message, next_state)
             message, next_state = self._handle_text_input(phone_number, state, user_input)
-            # Build buttons for the next state
+            # Build buttons for the next state OR from suggestions
             buttons = None
-            if next_state:
+            
+            # Check if there are pending suggestions for interactive selection
+            context = self.user_db.get_user_context(phone_number)
+            if context.get('pending_suggestions') and not next_state:
+                # Build buttons from suggestions
+                suggestions = context['pending_suggestions']
+                buttons = []
+                for i, suggestion in enumerate(suggestions[:3], 1):  # Max 3 buttons
+                    buttons.append({
+                        'type': 'reply',
+                        'reply': {
+                            'id': str(i),
+                            'title': suggestion[:20]  # WhatsApp button title max 20 chars
+                        }
+                    })
+                # Add restart button (always included)
+                buttons.append({
+                    'type': 'reply',
+                    'reply': {
+                        'id': 'restart_button',
+                        'title': '🔄 התחל מחדש'
+                    }
+                })
+            elif next_state:
                 next_state_def = self.flow['states'].get(next_state)
                 if next_state_def:
                     buttons = self._build_buttons(next_state_def)
@@ -212,6 +235,44 @@ class ConversationEngine:
         """
         state_id = state.get('id')
         
+        # Check if user is responding to a previous suggestion
+        context = self.user_db.get_user_context(phone_number)
+        if context.get('pending_suggestions'):
+            suggestions = context.get('pending_suggestions')
+            
+            # Check if user clicked restart button
+            if user_input == 'restart_button':
+                self.user_db.update_context(phone_number, 'pending_suggestions', None)
+                # Call restart handler but return only 2 values for text input
+                restart_msg, restart_state, _ = self._handle_restart(phone_number)
+                return restart_msg, restart_state
+            
+            # Check if user selected by number (from button click)
+            if user_input.isdigit():
+                idx = int(user_input) - 1
+                if 0 <= idx < len(suggestions):
+                    # User selected a suggestion
+                    selected_value = suggestions[idx]
+                    # Clear pending suggestions
+                    self.user_db.update_context(phone_number, 'pending_suggestions', None)
+                    # Save the selected value
+                    if state.get('save_to'):
+                        self.user_db.save_to_profile(phone_number, state['save_to'], selected_value)
+                        logger.info(f"Saved {state['save_to']} = '{selected_value}' for {phone_number}")
+                    # Continue to next state
+                    next_state = state.get('next_state')
+                    if next_state:
+                        next_state_def = self.flow['states'].get(next_state)
+                        if next_state_def and not next_state_def.get('message') and not next_state_def.get('expected_input'):
+                            auto_next_state = self._get_next_state(phone_number, next_state_def, None)
+                            if auto_next_state:
+                                next_state_def = self.flow['states'].get(auto_next_state)
+                                next_state = auto_next_state
+                        message = self._get_state_message(phone_number, next_state_def) if next_state_def else "תודה!"
+                        return message, next_state
+            # Clear suggestions if user typed something else (new input)
+            self.user_db.update_context(phone_number, 'pending_suggestions', None)
+        
         # Validation based on state
         validation_result = self._validate_input(state_id, user_input)
         
@@ -220,10 +281,10 @@ class ConversationEngine:
             error_msg = validation_result['error_message']
             if validation_result.get('suggestions'):
                 suggestions = validation_result['suggestions']
-                error_msg += f"\n\n💡 התכוונת ל:\n"
-                for i, suggestion in enumerate(suggestions, 1):
-                    error_msg += f"{i}. {suggestion}\n"
-                error_msg += "\nאנא בחר מספר או כתוב שוב."
+                # Save suggestions to context for interactive buttons
+                self.user_db.update_context(phone_number, 'pending_suggestions', suggestions)
+                error_msg = f"הישוב \"{user_input}\" לא נמצא במערכת. 🤔\n\n💡 התכוונת ל:\n"
+                # Note: suggestions will be shown as buttons, not text
             return error_msg, None
         
         # If validation passed, use normalized value

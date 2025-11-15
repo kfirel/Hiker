@@ -106,6 +106,20 @@ class UserDatabase:
             return user['state'].get('context', {})
         return {}
     
+    def update_context(self, phone_number: str, key: str, value: Any):
+        """Update a specific key in user's context"""
+        if not self.user_exists(phone_number):
+            self.create_user(phone_number)
+        
+        user = self.data['users'][phone_number]
+        if value is None and key in user['state']['context']:
+            # Remove key if value is None
+            del user['state']['context'][key]
+        else:
+            user['state']['context'][key] = value
+        
+        self._save_database()
+    
     def save_to_profile(self, phone_number: str, key: str, value: Any):
         """Save data to user profile"""
         if not self.user_exists(phone_number):
