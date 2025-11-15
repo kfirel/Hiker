@@ -10,8 +10,10 @@ from src.user_database import UserDatabase
 from src.conversation_engine import ConversationEngine
 
 # Setup
+from src.user_logger import UserLogger
 user_db = UserDatabase('debug_user_data.json')
-engine = ConversationEngine(user_db=user_db)
+user_logger = UserLogger()
+engine = ConversationEngine(user_db=user_db, user_logger=user_logger)
 phone = "test_debug"
 
 # Clean start

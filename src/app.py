@@ -10,6 +10,7 @@ from src.whatsapp_client import WhatsAppClient
 from src.timer_manager import TimerManager
 from src.user_database import UserDatabase
 from src.conversation_engine import ConversationEngine
+from src.user_logger import UserLogger
 
 # Configure logging
 logging.basicConfig(
@@ -25,7 +26,8 @@ app = Flask(__name__)
 whatsapp_client = WhatsAppClient()
 timer_manager = TimerManager(whatsapp_client)
 user_db = UserDatabase()
-conversation_engine = ConversationEngine(user_db=user_db)
+user_logger = UserLogger()
+conversation_engine = ConversationEngine(user_db=user_db, user_logger=user_logger)
 
 @app.route('/webhook', methods=['GET'])
 def webhook_verify():

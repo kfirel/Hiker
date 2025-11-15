@@ -8,19 +8,21 @@ import re
 import os
 from typing import Dict, Any, Tuple, Optional
 from src.validation import validate_settlement, validate_days, validate_time, validate_time_range
+from src.user_logger import UserLogger
 
 logger = logging.getLogger(__name__)
 
 class ConversationEngine:
     """Engine to process conversation flow"""
     
-    def __init__(self, flow_file='conversation_flow.json', user_db=None):
+    def __init__(self, flow_file='conversation_flow.json', user_db=None, user_logger=None):
         # If relative path, look in src/ directory
         if not os.path.isabs(flow_file) and not os.path.exists(flow_file):
             src_dir = os.path.dirname(os.path.abspath(__file__))
             flow_file = os.path.join(src_dir, flow_file)
         self.flow_file = flow_file
         self.user_db = user_db
+        self.user_logger = user_logger or UserLogger()
         self.flow = self._load_flow()
     
     def _load_flow(self) -> Dict[str, Any]:
@@ -45,12 +47,17 @@ class ConversationEngine:
         """
         message_text = message_text.strip()
         
+        # Log incoming message
+        self.user_logger.log_user_message(phone_number, message_text)
+        
         # Check for special commands
         command_response = self._check_commands(phone_number, message_text)
         if command_response:
-            if isinstance(command_response, tuple):
-                return command_response
-            return command_response, None
+            response_msg, buttons = command_response if isinstance(command_response, tuple) else (command_response, None)
+            # Log bot response
+            current_state = self.user_db.get_user_state(phone_number) if self.user_db.user_exists(phone_number) else None
+            self.user_logger.log_bot_response(phone_number, response_msg, current_state, buttons)
+            return response_msg, buttons
         
         # Get user's current state
         if not self.user_db.user_exists(phone_number):
@@ -79,6 +86,10 @@ class ConversationEngine:
         else:
             response, next_state = result
             buttons = None
+        
+        # Log bot response
+        current_state = self.user_db.get_user_state(phone_number)
+        self.user_logger.log_bot_response(phone_number, response, current_state, buttons)
         
         # Move to next state
         if next_state:
@@ -508,8 +519,14 @@ class ConversationEngine:
     
     def _handle_restart(self, phone_number: str) -> Tuple[str, Optional[str], Optional[list]]:
         """Handle restart action - full user data reset"""
+        # Log restart event
+        self.user_logger.log_event(phone_number, 'restart', {'reason': 'user_requested'})
+        
         # Delete all user data to start fresh
         self.user_db.delete_user_data(phone_number)
+        
+        # Clear user logs
+        self.user_logger.clear_user_logs(phone_number)
         
         # Create fresh user (this ensures user exists in database)
         self.user_db.create_user(phone_number)

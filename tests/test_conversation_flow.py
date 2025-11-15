@@ -18,7 +18,9 @@ class ConversationTester:
     
     def __init__(self):
         self.user_db = UserDatabase('test_user_data.json')
-        self.conversation_engine = ConversationEngine(user_db=self.user_db)
+        from src.user_logger import UserLogger
+        self.user_logger = UserLogger()
+        self.conversation_engine = ConversationEngine(user_db=self.user_db, user_logger=self.user_logger)
         self.test_phone = "test_972500000000"
         self.results = []
     

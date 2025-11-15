@@ -19,7 +19,9 @@ def test_interactive_suggestions():
     
     # Initialize
     user_db = UserDatabase()
-    conversation_engine = ConversationEngine('conversation_flow.json', user_db)
+    from src.user_logger import UserLogger
+    user_logger = UserLogger()
+    conversation_engine = ConversationEngine('conversation_flow.json', user_db, user_logger)
     test_phone = "+972501234999"
     
     # Clean up any existing data

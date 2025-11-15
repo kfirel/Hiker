@@ -5,6 +5,10 @@
 user_data.json
 test_user_data.json
 
+# User logs (contains conversation history)
+logs/
+*.log
+
 # Development notes and internal documentation
 .devnotes/
 
