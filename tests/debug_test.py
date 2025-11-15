@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
 """Quick debug test"""
 
-from user_database import UserDatabase
-from conversation_engine import ConversationEngine
+import sys
+import os
+# Add project root to path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from src.user_database import UserDatabase
+from src.conversation_engine import ConversationEngine
 
 # Setup
 user_db = UserDatabase('debug_user_data.json')

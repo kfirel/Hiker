@@ -1,10 +1,15 @@
+import sys
+import os
+# Add parent directory to path for imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from flask import Flask, request, jsonify
 import logging
-from config import Config
-from whatsapp_client import WhatsAppClient
-from timer_manager import TimerManager
-from user_database import UserDatabase
-from conversation_engine import ConversationEngine
+from src.config import Config
+from src.whatsapp_client import WhatsAppClient
+from src.timer_manager import TimerManager
+from src.user_database import UserDatabase
+from src.conversation_engine import ConversationEngine
 
 # Configure logging
 logging.basicConfig(

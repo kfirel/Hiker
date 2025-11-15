@@ -5,8 +5,9 @@ Conversation flow engine that processes the conversation flow JSON
 import json
 import logging
 import re
+import os
 from typing import Dict, Any, Tuple, Optional
-from validation import validate_settlement, validate_days, validate_time, validate_time_range
+from src.validation import validate_settlement, validate_days, validate_time, validate_time_range
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +15,10 @@ class ConversationEngine:
     """Engine to process conversation flow"""
     
     def __init__(self, flow_file='conversation_flow.json', user_db=None):
+        # If relative path, look in src/ directory
+        if not os.path.isabs(flow_file) and not os.path.exists(flow_file):
+            src_dir = os.path.dirname(os.path.abspath(__file__))
+            flow_file = os.path.join(src_dir, flow_file)
         self.flow_file = flow_file
         self.user_db = user_db
         self.flow = self._load_flow()

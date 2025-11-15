@@ -11,7 +11,7 @@
 
 מחבר בין טרמפיסטים לנהגים באמצעות WhatsApp
 
-[תיעוד](#-תיעוד) • [התקנה](#-התקנה-מהירה) • [תכונות](#-תכונות) • [הדרכה](#-הדרכה)
+[תיעוד](#-תיעוד) • [התקנה](#-התקנה-מהירה) • [תכונות](#-תכונות) • [מבנה](#-מבנה-הפרויקט)
 
 </div>
 
@@ -41,16 +41,17 @@
 
 ### לנהגים 🚗
 - 🗓️ הגדרת שגרת נסיעה קבועה
-- 📢 פרסום טרמפים באופן אקטיvi
+- 📢 פרסום טרמפים באופן אקטיבי
 - 🎯 בחירת העדפות התראות חכמות
 - 📊 ניהול מסלולים מרובים
 
 ### תכונות מתקדמות ✨
-- 🔄 כפתור restart בכל אינטראקציה
+- 🔘 כפתורים אינטראקטיביים לכל פעולה
 - ✅ אימות אוטומטי של ישובים (100+ ישובים)
-- 🤖 הצעות חכמות לישובים דומים
+- 🤖 הצעות חכמות לישובים דומים עם כפתורים
 - 📅 אימות פורמטים (ימים, שעות, טווחי זמן)
 - 💬 מסך עזרה מובנה
+- 🔄 כפתור restart בכל אינטראקציה
 - 🌐 תמיכה בפקודות מקוצרות (חזור, חדש, תפריט, עזרה)
 
 ---
@@ -104,36 +105,14 @@ NGROK_AUTHTOKEN=your_ngrok_token
 ### שלב 4: הרצת הבוט
 
 ```bash
-# הרצת ngrok
-python start_ngrok.py
+# הרצת ngrok (בטרמינל נפרד)
+python scripts/start_ngrok.py
 
-# בטרמינל אחר - הרצת הבוט
-python app.py
+# הרצת הבוט
+python src/app.py
 ```
 
 🎉 **הבוט פועל!** עכשיו הגדר את ה-webhook ב-Meta Developer Console.
-
----
-
-## 📚 תיעוד
-
-### מדריכים מפורטים
-
-- 📖 [**START_HERE.md**](START_HERE.md) - התחל כאן! המדריך הראשי
-- 🏗️ [**ARCHITECTURE.md**](ARCHITECTURE.md) - ארכיטקטורת המערכת
-- 🔧 [**SETUP_GUIDE.md**](SETUP_GUIDE.md) - מדריך התקנה מפורט
-- 🔗 [**FIND_WEBHOOK_IN_META.md**](FIND_WEBHOOK_IN_META.md) - הגדרת webhook
-- 🌐 [**NGROK_SETUP.md**](NGROK_SETUP.md) - הגדרת ngrok
-- 🔘 [**INTERACTIVE_BUTTONS_GUIDE.md**](INTERACTIVE_BUTTONS_GUIDE.md) - כפתורים אינטראקטיביים
-- ✅ [**VALIDATION_GUIDE.md**](VALIDATION_GUIDE.md) - מנגנון האימות
-- 🔄 [**RESTART_BUTTON_FEATURE.md**](RESTART_BUTTON_FEATURE.md) - כפתור ה-restart
-- 📊 [**CHAT_FLOW_DIAGRAM.md**](CHAT_FLOW_DIAGRAM.md) - תרשים זרימת השיחה
-- 💡 [**QUICK_REFERENCE.md**](QUICK_REFERENCE.md) - עזר מהיר
-
-### מסמכי עדכונים
-- 🆕 [**WHATS_NEW.md**](WHATS_NEW.md) - מה חדש
-- 📝 [**MENU_UPDATE_SUMMARY.md**](MENU_UPDATE_SUMMARY.md) - עדכון התפריט
-- 📋 [**TEST_RESULTS.md**](TEST_RESULTS.md) - תוצאות בדיקות
 
 ---
 
@@ -141,19 +120,56 @@ python app.py
 
 ```
 Hiker/
-├── app.py                      # אפליקציה ראשית (Flask)
-├── whatsapp_client.py          # לקוח WhatsApp API
-├── conversation_engine.py      # מנוע השיחה
-├── conversation_flow.json      # הגדרת זרימת השיחה (עברית)
-├── user_database.py            # ניהול משתמשים (JSON)
-├── validation.py               # אימות קלט
-├── timer_manager.py            # ניהול טיימרים
-├── config.py                   # הגדרות
-├── start_ngrok.py              # הרצת ngrok
-├── requirements.txt            # תלויות Python
-├── .env.example                # דוגמה למשתני סביבה
-└── docs/                       # תיעוד מפורט
+├── README.md                    # המסמך הזה
+├── LICENSE                      # רישיון MIT
+├── requirements.txt             # תלויות Python
+├── .env.example                 # דוגמה למשתני סביבה
+├── .gitignore                   # קבצים להתעלם מהם
+│
+├── src/                         # 📦 קוד מקור
+│   ├── __init__.py
+│   ├── app.py                   # אפליקציה ראשית (Flask)
+│   ├── config.py                # הגדרות
+│   ├── whatsapp_client.py       # לקוח WhatsApp API
+│   ├── conversation_engine.py   # מנוע השיחה
+│   ├── conversation_flow.json   # הגדרת זרימת השיחה
+│   ├── user_database.py         # ניהול משתמשים
+│   ├── validation.py            # אימות קלט
+│   └── timer_manager.py         # ניהול טיימרים
+│
+├── tests/                       # 🧪 בדיקות
+│   ├── __init__.py
+│   ├── test_conversation_flow.py
+│   ├── test_interactive_suggestions.py
+│   └── debug_test.py
+│
+├── scripts/                     # 🔧 סקריפטים עזר
+│   ├── start_ngrok.py           # הרצת ngrok
+│   ├── verify_setup.py          # בדיקת התקנה
+│   └── push_to_github.sh        # העלאה לגיטהאב
+│
+└── docs/                        # 📚 תיעוד
+    ├── SETUP_GUIDE.md           # מדריך התקנה מפורט
+    ├── ARCHITECTURE.md          # ארכיטקטורת המערכת
+    ├── CONVERSATION_FLOW_GUIDE.md
+    ├── VALIDATION_GUIDE.md
+    ├── INTERACTIVE_BUTTONS_GUIDE.md
+    └── QUICK_REFERENCE.md
 ```
+
+---
+
+## 📚 תיעוד
+
+### מדריכים מפורטים
+
+- 📖 [**docs/SETUP_GUIDE.md**](docs/SETUP_GUIDE.md) - מדריך התקנה מפורט
+- 🏗️ [**docs/ARCHITECTURE.md**](docs/ARCHITECTURE.md) - ארכיטקטורת המערכת
+- 🔧 [**docs/NGROK_SETUP.md**](docs/NGROK_SETUP.md) - הגדרת ngrok
+- 🔗 [**docs/FIND_WEBHOOK_IN_META.md**](docs/FIND_WEBHOOK_IN_META.md) - הגדרת webhook
+- 🔘 [**docs/INTERACTIVE_BUTTONS_GUIDE.md**](docs/INTERACTIVE_BUTTONS_GUIDE.md) - כפתורים אינטראקטיביים
+- ✅ [**docs/VALIDATION_GUIDE.md**](docs/VALIDATION_GUIDE.md) - מנגנון האימות
+- 💡 [**docs/QUICK_REFERENCE.md**](docs/QUICK_REFERENCE.md) - עזר מהיר
 
 ---
 
@@ -171,13 +187,10 @@ Hiker/
 
 משתמש: תל אביב
 בוט: מה אתה?
-     1. 🚗🚶 גיבור על! (גם נהג וגם טרמפיסט)
-     2. 🚶 טרמפיסט
-     3. 🚗 נהג
-     
-משתמש: [בוחר אפשרות 2]
-בוט: האם אתה מחפש כרגע טרמפ? 🏃‍♂️💨
-     [כפתורים: כן / לא / 🔄 התחל מחדש]
+     [כפתור: 🚗🚶 גיבור על]
+     [כפתור: 🚶 טרמפיסט]
+     [כפתור: 🚗 נהג]
+     [כפתור: 🔄 התחל מחדש]
 ```
 
 ### משתמש רשום חוזר
@@ -187,12 +200,12 @@ Hiker/
 בוט: היי דני! 👋😊
      מה תרצה לעשות היום?
      
-     1. 🚶 מחפש טרמפ!
-     2. 🚗 לתת טרמפ
-     3. 📅 לתכנן נסיעה מראש
-     4. 🔄 לעדכן שגרת נסיעות
-     5. ✏️ לעדכן פרטים אישיים
-     6. 💬 עזרה
+     [כפתור: 🚶 מחפש טרמפ]
+     [כפתור: 🚗 לתת טרמפ]
+     [כפתור: 📅 לתכנן נסיעה]
+     [כפתור: 🔄 עדכון שגרה]
+     [כפתור: ✏️ עדכון פרטים]
+     [כפתור: 💬 עזרה]
 ```
 
 ---
@@ -203,13 +216,17 @@ Hiker/
 
 ```bash
 # הרצת בדיקות
-python test_conversation_flow.py
+python tests/test_conversation_flow.py
+python tests/test_interactive_suggestions.py
 
-# הרצת בדיקת debug ספציפית
-python debug_test.py
+# בדיקת debug ספציפית
+python tests/debug_test.py
+
+# בדיקת התקנה
+python scripts/verify_setup.py
 ```
 
-**כיסוי בדיקות:** 97.9% (46/47 טסטים עוברים)
+**כיסוי בדיקות:** 97.9% (47/48 טסטים עוברים)
 
 ---
 

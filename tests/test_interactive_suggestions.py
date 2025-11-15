@@ -3,8 +3,13 @@
 Test for interactive settlement suggestions feature
 """
 
-from conversation_engine import ConversationEngine
-from user_database import UserDatabase
+import sys
+import os
+# Add project root to path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from src.conversation_engine import ConversationEngine
+from src.user_database import UserDatabase
 import json
 
 def test_interactive_suggestions():

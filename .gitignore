@@ -5,6 +5,9 @@
 user_data.json
 test_user_data.json
 
+# Development notes and internal documentation
+.devnotes/
+
 # Python
 __pycache__/
 *.py[cod]
@@ -35,6 +38,7 @@ Thumbs.db
 *.tmp
 *.bak
 *~
+PROJECT_STRUCTURE.txt
 
 # ngrok
 ngrok

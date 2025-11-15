@@ -4,13 +4,18 @@ Helper script to start ngrok tunnel for local webhook testing
 Run this before starting the Flask app
 """
 
+import sys
+import os
+# Add project root to path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from pyngrok import ngrok, conf
 import logging
-import os
 from dotenv import load_dotenv
 
-# Load environment variables
-load_dotenv()
+# Load environment variables from project root
+env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env')
+load_dotenv(env_path)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
