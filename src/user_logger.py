@@ -70,19 +70,59 @@ class UserLogger:
             # Handle different button formats
             try:
                 if isinstance(buttons, list) and len(buttons) > 0:
-                    if isinstance(buttons[0], dict) and 'reply' in buttons[0]:
-                        log_entry['buttons'] = [btn['reply']['title'] for btn in buttons]
-                    else:
-                        log_entry['buttons'] = [str(btn) for btn in buttons]
+                    button_titles = []
+                    for btn in buttons:
+                        if isinstance(btn, dict):
+                            # WhatsApp format: {'type': 'reply', 'reply': {'id': '...', 'title': '...'}}
+                            if 'reply' in btn and isinstance(btn['reply'], dict):
+                                button_titles.append(btn['reply']['title'])
+                            # Simple format: {'id': '...', 'title': '...'}
+                            elif 'title' in btn:
+                                button_titles.append(btn['title'])
+                            else:
+                                button_titles.append(str(btn))
+                        else:
+                            button_titles.append(str(btn))
+                    log_entry['buttons'] = button_titles
                 else:
                     log_entry['buttons'] = []
-            except (KeyError, TypeError):
-                log_entry['buttons'] = ['(complex buttons)']
+            except (KeyError, TypeError) as e:
+                log_entry['buttons'] = [f'(error parsing buttons: {e})']
         
-        # Write to log file
+        # Write to log file in readable format
         try:
             with open(log_file, 'a', encoding='utf-8') as f:
-                f.write(json.dumps(log_entry, ensure_ascii=False) + '\n')
+                # Write separator for readability
+                f.write('─' * 80 + '\n')
+                
+                # Write timestamp
+                f.write(f"⏰ {log_entry['timestamp']}\n")
+                
+                # Write direction with icon
+                direction_icon = '📥' if direction == 'incoming' else '📤'
+                f.write(f"{direction_icon} {direction.upper()}\n")
+                
+                # Write state if present
+                if 'state' in log_entry:
+                    f.write(f"🔹 State: {log_entry['state']}\n")
+                
+                # Write message (with line breaks for long messages)
+                message = log_entry['message']
+                if len(message) > 60:
+                    # Split long messages into multiple lines
+                    f.write(f"💬 Message:\n")
+                    # Split by newlines first
+                    for line in message.split('\n'):
+                        if line:
+                            f.write(f"   {line}\n")
+                else:
+                    f.write(f"💬 Message: {message}\n")
+                
+                # Write buttons if present
+                if 'buttons' in log_entry and log_entry['buttons']:
+                    f.write(f"🔘 Buttons: {', '.join(log_entry['buttons'])}\n")
+                
+                f.write('\n')  # Extra line for spacing
         except Exception as e:
             # Don't let logging errors break the app
             logging.error(f"Failed to write to user log: {e}")
@@ -118,17 +158,21 @@ class UserLogger:
         """
         log_file = self._get_log_file_path(phone_number)
         
-        log_entry = {
-            'timestamp': datetime.now().isoformat(),
-            'event': event_type,
-        }
-        
-        if details:
-            log_entry['details'] = details
+        timestamp = datetime.now().isoformat()
         
         try:
             with open(log_file, 'a', encoding='utf-8') as f:
-                f.write(json.dumps(log_entry, ensure_ascii=False) + '\n')
+                # Write separator for readability
+                f.write('═' * 80 + '\n')
+                f.write(f"⏰ {timestamp}\n")
+                f.write(f"⭐ EVENT: {event_type.upper()}\n")
+                
+                if details:
+                    f.write(f"📋 Details:\n")
+                    for key, value in details.items():
+                        f.write(f"   • {key}: {value}\n")
+                
+                f.write('═' * 80 + '\n\n')
         except Exception as e:
             logging.error(f"Failed to write event to user log: {e}")
     
