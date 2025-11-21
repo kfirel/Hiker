@@ -86,6 +86,44 @@ def process_message(message, value):
     from_number = message.get('from')
     message_id = message.get('id')
     
+    # Try to get user's profile name from contacts in webhook data
+    # WhatsApp sometimes includes contact info in the webhook
+    profile_name = None
+    try:
+        if 'contacts' in value:
+            contacts = value.get('contacts', [])
+            if isinstance(contacts, list):
+                for contact in contacts:
+                    if isinstance(contact, dict) and contact.get('wa_id') == from_number:
+                        profile_name = contact.get('profile', {}).get('name')
+                        if profile_name:
+                            logger.info(f"Found profile name from webhook for {from_number}: {profile_name}")
+                            # Save to user profile if user exists
+                            if user_db.user_exists(from_number):
+                                # Only save if not already set (don't override user's entered name)
+                                if not user_db.get_profile_value(from_number, 'full_name'):
+                                    user_db.save_to_profile(from_number, 'whatsapp_name', profile_name)
+                                    # Use WhatsApp name as full_name if no name was entered
+                                    user_db.save_to_profile(from_number, 'full_name', profile_name)
+                            break
+    except Exception as e:
+        logger.debug(f"Error extracting profile name from webhook for {from_number}: {e}")
+    
+    # If not found in webhook, try to get from API (async, won't block)
+    if not profile_name:
+        try:
+            profile_name = whatsapp_client.get_user_profile_name(from_number)
+            if profile_name:
+                # Ensure user exists
+                if not user_db.user_exists(from_number):
+                    user_db.create_user(from_number)
+                # Save WhatsApp name separately, don't override user's entered name
+                if not user_db.get_profile_value(from_number, 'full_name'):
+                    user_db.save_to_profile(from_number, 'whatsapp_name', profile_name)
+                    user_db.save_to_profile(from_number, 'full_name', profile_name)
+        except Exception as e:
+            logger.debug(f"Could not fetch profile name for {from_number}: {e}")
+    
     # Handle different message types
     if message_type == 'text':
         message_text = message.get('text', {}).get('body', '').strip()
@@ -132,9 +170,19 @@ def process_message(message, value):
                 logger.error(f"Failed to send response to {from_number}")
     
     except Exception as e:
-        logger.error(f"Error processing message with conversation engine: {e}", exc_info=True)
+        import traceback
+        error_traceback = traceback.format_exc()
+        error_msg = f"Error processing message '{message_text}' from {from_number}"
+        
+        # Log to both system logger and user logger
+        logger.error(error_msg, exc_info=True)
+        user_logger.log_error(from_number, error_msg, exception=e, traceback_str=error_traceback)
+        
         # Fallback response
-        whatsapp_client.send_message(from_number, "מצטער, אירעה שגיאה. נסה שוב או הקש 'עזרה'.")
+        error_response = "מצטער, אירעה שגיאה. נסה שוב או הקש 'עזרה'."
+        whatsapp_client.send_message(from_number, error_response)
+        # Also log the error response to user log
+        user_logger.log_bot_response(from_number, error_response, state=None, buttons=None)
 
 @app.route('/health', methods=['GET'])
 def health_check():

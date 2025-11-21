@@ -108,6 +108,12 @@ class UserLogger:
                 
                 # Write message (with line breaks for long messages)
                 message = log_entry['message']
+                # Truncate very long messages (over 1000 chars) for log readability
+                MAX_MESSAGE_LENGTH = 1000
+                if len(message) > MAX_MESSAGE_LENGTH:
+                    truncated_message = message[:MAX_MESSAGE_LENGTH] + f"\n... (truncated, total length: {len(message)} chars)"
+                    message = truncated_message
+                
                 if len(message) > 60:
                     # Split long messages into multiple lines
                     f.write(f"💬 Message:\n")
@@ -202,6 +208,42 @@ class UserLogger:
             logging.error(f"Failed to read user log: {e}")
         
         return logs
+    
+    def log_error(self, phone_number: str, error_message: str, exception: Exception = None, traceback_str: str = None):
+        """Log an error that occurred while processing a user's message
+        
+        Args:
+            phone_number: User's phone number
+            error_message: Error message description
+            exception: Exception object (optional)
+            traceback_str: Traceback string (optional)
+        """
+        log_file = self._get_log_file_path(phone_number)
+        
+        timestamp = datetime.now().isoformat()
+        
+        try:
+            with open(log_file, 'a', encoding='utf-8', buffering=1) as f:
+                # Write separator for readability
+                f.write('═' * 80 + '\n')
+                f.write(f"⏰ {timestamp}\n")
+                f.write(f"❌ ERROR: {error_message}\n")
+                
+                if exception:
+                    f.write(f"📋 Exception Type: {type(exception).__name__}\n")
+                    f.write(f"📋 Exception Message: {str(exception)}\n")
+                
+                if traceback_str:
+                    f.write(f"📋 Traceback:\n")
+                    # Indent traceback lines for readability
+                    for line in traceback_str.split('\n'):
+                        if line.strip():
+                            f.write(f"   {line}\n")
+                
+                f.write('═' * 80 + '\n\n')
+                f.flush()  # Force write to disk immediately
+        except Exception as e:
+            logging.error(f"Failed to write error to user log: {e}")
     
     def clear_user_logs(self, phone_number: str):
         """Clear all logs for a user

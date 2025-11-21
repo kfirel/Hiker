@@ -1,0 +1,398 @@
+# Test Input Scenarios for Hiker WhatsApp Bot
+# Each list represents a complete conversation flow
+# Format: Each item in the list is a user message that will be sent to the bot
+#
+# To add a new flow:
+# 1. Choose an ID (use the next sequential number, or insert between existing IDs)
+# 2. Add the flow with id, name, description, and messages
+# 3. Example:
+#    - id: 11
+#      name: "My New Flow"
+#      description: "Description of what this flow tests"
+#      messages:
+#        - "First message"
+#        - "Second message"
+
+flows:
+  # Flow 1: New hitchhiker looking for ride immediately
+  - id: 1
+    name: "New Hitchhiker - Immediate Ride Request"
+    description: "Complete registration flow for a new hitchhiker who needs a ride now"
+    messages:
+      - "היי"
+      - "דני כהן"
+      - "תל אביב"
+      - "2"  # Choose hitchhiker
+      - "1"  # Yes, looking for ride now
+      - "ירושלים"
+      - "1"  # Soon (flexible hours)
+      - "7-9"  # Simple format (will be normalized to 07:00-09:00)
+
+  # Flow 2: New driver with routine
+  - id: 2
+    name: "New Driver - With Routine"
+    description: "Complete registration flow for a new driver with a driving routine"
+    messages:
+      - "שלום"
+      - "יוסי נהג"
+      - "חיפה"
+      - "3"  # Choose driver
+      - "1"  # Yes, has routine
+      - "תל אביב"
+      - "א-ה"
+      - "07:00"
+      - "18:00"
+      - "2"  # No more destinations
+      - "3"  # Alert preference: destinations + times
+
+  # Flow 3: User who is both hitchhiker and driver
+  - id: 3
+    name: "Both User Type - Complete Flow"
+    description: "User who is both hitchhiker and driver, not looking for ride now"
+    messages:
+      - "היי"
+      - "שרה לוי"
+      - "רעננה"
+      - "1"  # Choose both (superhero)
+      - "2"  # Not looking for ride now
+      - "1"  # Yes, set default destination
+      - "ירושלים"
+      - "1"  # Yes, has routine
+      - "תל אביב"
+      - "א,ג,ה"
+      - "08:00"
+      - "17:00"
+      - "2"  # No more destinations
+      - "2"  # Alert preference: my destinations only
+
+  # Flow 4: Registered hitchhiker returning to request ride
+  - id: 4
+    name: "Registered Hitchhiker - Request Ride"
+    description: "Registered user returning to request a new ride"
+    messages:
+      - "שלום"
+      - "דני כהן"
+      - "תל אביב"
+      - "2"  # Hitchhiker
+      - "2"  # Not looking now
+      - "2"  # No default destination
+      # After registration completes, user sends new message
+      - "שלום"
+      - "1"  # Looking for ride
+      - "1"  # Now
+      - "חיפה"
+
+  # Flow 5: Driver offering ride
+  - id: 5
+    name: "Registered Driver - Offer Ride"
+    description: "Registered driver offering a ride"
+    messages:
+      - "היי"
+      - "יוסי נהג"
+      - "חיפה"
+      - "3"  # Driver
+      - "2"  # No routine
+      - "4"  # No alerts
+      # After registration, offer ride
+      - "שלום"
+      - "2"  # Offering ride
+      - "1"  # Leaving now
+      - "תל אביב"
+
+  # Flow 6: User with invalid settlement input (testing validation)
+  - id: 6
+    name: "Validation Test - Invalid Settlement"
+    description: "Test settlement validation with invalid input and suggestions"
+    messages:
+      - "test"
+      - "בדיקה"
+      - "תל אביב"  # Valid settlement
+      - "2"  # Hitchhiker
+      - "1"  # Looking now
+      - "תלאביב"  # Invalid (typo) - should suggest "תל אביב"
+      - "1"  # Select first suggestion
+      - "1"  # Soon
+      - "08:00-10:00"
+
+  # Flow 7: User restarting conversation mid-flow
+  - id: 7
+    name: "Restart Command Test"
+    description: "User uses restart command during registration"
+    messages:
+      - "היי"
+      - "דני"
+      - "תל אביב"
+      - "2"  # Hitchhiker
+      - "חדש"  # Restart command
+      - "שרה"
+      - "ירושלים"
+      - "1"  # Both
+      - "2"  # Not looking now
+      - "2"  # No default destination
+      - "2"  # No routine
+      - "1"  # All alerts
+
+  # Flow 8: Driver with multiple routine destinations
+  - id: 8
+    name: "Driver - Multiple Routines"
+    description: "Driver setting up multiple routine destinations"
+    messages:
+      - "שלום"
+      - "יוסי נהג"
+      - "חיפה"
+      - "3"  # Driver
+      - "1"  # Has routine
+      - "תל אביב"
+      - "א-ה"
+      - "07:00"
+      - "18:00"
+      - "1"  # Yes, another destination
+      - "ירושלים"
+      - "ב,ד"
+      - "09:00"
+      - "19:00"
+      - "2"  # No more destinations
+      - "3"  # Destinations + times alert preference
+
+  # Flow 9: Hitchhiker with default destination
+  - id: 9
+    name: "Hitchhiker - With Default Destination"
+    description: "Hitchhiker setting up and using default destination"
+    messages:
+      - "היי"
+      - "דני כהן"
+      - "תל אביב"
+      - "2"  # Hitchhiker
+      - "2"  # Not looking now
+      - "1"  # Yes, set default destination
+      - "ירושלים"
+      # After registration, request ride using default
+      - "שלום"
+      - "1"  # Looking for ride
+      - "1"  # Now
+      - "1"  # Use default destination (if asked)
+      - "1"  # Soon
+      - "14:00-16:00"
+
+  # Flow 10: Testing help and menu commands
+  - id: 10
+    name: "Special Commands Test"
+    description: "Testing help, menu, and restart commands"
+    messages:
+      - "היי"
+      - "דני כהן"
+      - "תל אביב"
+      - "2"  # Hitchhiker
+      - "2"  # Not looking now
+      - "2"  # No default destination
+      # After registration
+      - "עזרה"  # Help command
+      - "תפריט"  # Menu command
+      - "1"  # Looking for ride
+      - "חדש"  # Restart command
+      - "שרה"
+      - "ירושלים"
+      - "2"  # Hitchhiker
+      - "2"  # Not looking now
+      - "2"  # No default destination
+
+  # Flow 11: Continuing conversation with existing registered user (from flow 1)
+  - id: 11
+    name: "Existing User - Request Ride Again"
+    description: "Registered user from flow 1 returning to request another ride"
+    continue_from: 1  # Continue from flow 1's user
+    messages:
+      - "היי אני צריך עזרה"
+      - "מחפש שוב טרמפ"
+
+  # Flow 12: Complex flow - Multiple invalid inputs and recovery
+  - id: 12
+    name: "Complex Flow - Invalid Inputs and Recovery"
+    description: "Tests multiple invalid inputs, validation errors, and recovery"
+    messages:
+      - "שלום"
+      - "123"  # Invalid name (numbers)
+      - "יוסי כהן"  # Valid name
+      - "invalid_settlement_xyz"  # Invalid settlement
+      - "תל אביב"  # Valid settlement
+      - "99"  # Invalid choice (not 1, 2, or 3)
+      - "2"  # Valid choice - hitchhiker
+      - "invalid"  # Invalid choice for looking for ride
+      - "1"  # Valid - looking now
+      - "invalid_destination_123"  # Invalid destination
+      - "ירושלים"  # Valid destination
+      - "invalid_time_format"  # Invalid time format
+      - "1"  # Soon
+      - "25:99-30:00"  # Invalid time range
+      - "08:00-10:00"  # Valid time range
+
+  # Flow 13: Multiple restarts and state changes
+  - id: 13
+    name: "Complex Flow - Multiple Restarts"
+    description: "User restarts multiple times, changes mind, tests state persistence"
+    messages:
+      - "היי"
+      - "דני"
+      - "תל אביב"
+      - "2"  # Hitchhiker
+      - "חדש"  # Restart mid-flow
+      - "שרה"
+      - "ירושלים"
+      - "1"  # Both
+      - "1"  # Looking now
+      - "חדש"  # Restart again
+      - "יוסי"
+      - "חיפה"
+      - "3"  # Driver
+      - "1"  # Has routine
+      - "תל אביב"
+      - "invalid_days_format"  # Invalid days
+      - "א-ה"  # Valid days
+      - "25:99"  # Invalid time
+      - "07:00"  # Valid time
+      - "18:00"  # Return time
+      - "2"  # No more destinations
+      - "invalid_alert"  # Invalid alert choice
+      - "3"  # Valid alert preference
+
+  # Flow 14: Edge case - Very long inputs
+  - id: 14
+    name: "Edge Case - Long Inputs"
+    description: "Tests handling of very long text inputs"
+    messages:
+      - "שלום"
+      - "דני כהן בן אברהם בן יצחק בן יעקב"  # Very long name
+      - "תל אביב יפו רמת גן גבעתיים"  # Multiple settlements
+      - "2"  # Hitchhiker
+      - "2"  # Not looking now
+      - "ירושלים תל אביב חיפה באר שבע אשדוד נתניה"  # Very long destination
+      - "2"  # No default destination
+
+  # Flow 15: Complex driver flow with errors
+  - id: 15
+    name: "Complex Driver Flow - With Errors"
+    description: "Driver registration with multiple errors and corrections"
+    messages:
+      - "היי"
+      - "נהג נהג"  # Name
+      - "invalid123"  # Invalid settlement
+      - "חיפה"  # Valid settlement
+      - "3"  # Driver
+      - "maybe"  # Invalid choice for routine
+      - "1"  # Yes, has routine
+      - "invalid_dest_xyz"  # Invalid destination
+      - "תל אביב"  # Valid destination
+      - "יום ראשון שני שלישי"  # Invalid days format
+      - "א-ה"  # Valid days
+      - "7:0"  # Time without leading zero
+      - "07:00"  # Valid time
+      - "18:0"  # Return time without leading zero
+      - "18:00"  # Valid return time
+      - "yes"  # Invalid choice for another destination
+      - "1"  # Yes, another destination
+      - "ירושלים"
+      - "כל יום כל יום"  # Redundant but valid
+      - "9:00"  # Time without leading zero
+      - "09:00"  # Valid time
+      - "19:00"
+      - "maybe"  # Invalid choice
+      - "2"  # No more destinations
+      - "5"  # Invalid alert preference
+      - "3"  # Valid alert preference
+
+  # Flow 16: Rapid state changes and button clicks
+  - id: 16
+    name: "Complex Flow - Rapid State Changes"
+    description: "Rapid button clicks and state transitions"
+    messages:
+      - "test"
+      - "בדיקה"
+      - "תל אביב"
+      - "1"  # Both
+      - "1"  # Looking now
+      - "ירושלים"
+      - "1"  # Soon
+      - "08:00-10:00"
+      # Should transition to driver questions
+      - "1"  # Has routine
+      - "תל אביב"
+      - "א-ה"
+      - "07:00"
+      - "18:00"
+      - "2"  # No more destinations
+      - "3"  # Alert preference
+
+  # Flow 17: Boundary conditions - Empty and special characters
+  - id: 17
+    name: "Edge Case - Special Characters"
+    description: "Tests empty inputs, special characters, and boundary conditions"
+    messages:
+      - "   "  # Whitespace only
+      - "היי"
+      - "דני@כהן#123"  # Special characters in name
+      - "דני כהן"  # Valid name
+      - "תל-אביב"  # Settlement with dash
+      - "2"  # Hitchhiker
+      - "1"  # Looking now
+      - "ירושלים!"  # Destination with punctuation
+      - "ירושלים"  # Valid destination
+      - "1"  # Soon
+      - "08:00 - 10:00"  # Time range with spaces
+      - "08:00-10:00"  # Valid time range
+
+  # Flow 18: Complex both user type flow
+  - id: 18
+    name: "Complex Both User - Complete Journey"
+    description: "Complete journey as both hitchhiker and driver with errors"
+    messages:
+      - "שלום"
+      - "יוסי כהן"
+      - "רעננה"
+      - "1"  # Both
+      - "1"  # Looking now
+      - "תל אביב"
+      - "1"  # Soon
+      - "08:00-10:00"
+      # Now driver questions
+      - "maybe"  # Invalid
+      - "1"  # Has routine
+      - "ירושלים"
+      - "invalid"  # Invalid days
+      - "א,ג,ה"  # Valid days
+      - "7:30"  # Time
+      - "07:30"  # Normalized time
+      - "17:30"
+      - "2"  # No more destinations
+      - "invalid"  # Invalid alert
+      - "2"  # My destinations only
+
+  # Flow 19: Existing user sending messages after registration
+  - id: 19
+    name: "Existing User - Post Registration Messages"
+    description: "Tests an existing registered user sending various messages after completing registration"
+    continue_from: 1  # Continue from flow 1's user (registered hitchhiker)
+    messages:
+      - "שלום"  # User greets bot after registration
+      - "1"  # Looking for ride
+      - "1"  # Now
+      - "חיפה"  # New destination
+      - "1"  # Soon
+      - "14-16"  # Simple time range format
+      - "תודה"  # User thanks bot
+      - "עזרה"  # User asks for help
+      - "תפריט"  # User requests menu
+
+  # Flow 20: Settlement validation - requires valid settlement
+  - id: 20
+    name: "Settlement Validation - Requires Valid Input"
+    description: "Tests that settlement validation requires valid settlement and doesn't allow free text"
+    messages:
+      - "היי"
+      - "דני כהן"
+      - "תל אביב"  # Valid settlement
+      - "2"  # Hitchhiker
+      - "1"  # Looking now
+      - "נתיב"  # Invalid settlement - should show error and suggestions
+      - "נתיבות"  # Select valid suggestion or enter valid settlement
+      - "1"  # Soon
+      - "08:00-10:00"

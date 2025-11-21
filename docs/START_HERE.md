@@ -1,9 +1,10 @@
-# 🚀 START HERE - Your WhatsApp Bot Project
+# 🚀 START HERE - Hiker WhatsApp Bot
 
-Welcome! Your WhatsApp chatbot project is ready. This bot will:
-- ✅ Respond "hello to you too" when someone sends "hello"
-- ✅ Send "are you there" after 10 minutes of receiving any message
-- ✅ Reset the timer when a new message arrives
+Welcome! Your WhatsApp chatbot project for Gevaram settlement is ready. This bot will:
+- ✅ Connect hitchhikers with drivers from Gevaram
+- ✅ Support ride requests and ride offers
+- ✅ Manage routine trip schedules
+- ✅ Send smart notifications to match riders and drivers
 
 ## 📚 Documentation Files
 

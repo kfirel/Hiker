@@ -1,5 +1,6 @@
 import requests
 import logging
+from typing import Optional
 from src.config import Config
 
 logger = logging.getLogger(__name__)
@@ -11,6 +12,43 @@ class WhatsAppClient:
         self.phone_number_id = Config.WHATSAPP_PHONE_NUMBER_ID
         self.access_token = Config.WHATSAPP_ACCESS_TOKEN
         self.api_url = Config.WHATSAPP_API_URL
+    
+    def get_user_profile_name(self, phone_number: str) -> Optional[str]:
+        """
+        Get user's profile name from WhatsApp API
+        
+        Args:
+            phone_number (str): User's phone number (with country code, no +)
+            
+        Returns:
+            str: User's profile name, or None if not available
+        """
+        # WhatsApp Cloud API endpoint for getting user profile
+        profile_url = f"https://graph.facebook.com/v18.0/{phone_number}"
+        
+        headers = {
+            'Authorization': f'Bearer {self.access_token}'
+        }
+        
+        params = {
+            'fields': 'profile'
+        }
+        
+        try:
+            response = requests.get(profile_url, headers=headers, params=params)
+            if response.status_code == 200:
+                data = response.json()
+                # Profile name is usually in 'name' field
+                profile_name = data.get('name') or data.get('profile', {}).get('name')
+                if profile_name:
+                    logger.info(f"Retrieved profile name for {phone_number}: {profile_name}")
+                    return profile_name
+            else:
+                logger.debug(f"Could not get profile for {phone_number}: {response.status_code}")
+        except Exception as e:
+            logger.debug(f"Error getting profile name for {phone_number}: {str(e)}")
+        
+        return None
     
     def send_message(self, to_phone_number, message_text, buttons=None):
         """
@@ -160,9 +198,24 @@ class WhatsAppClient:
         # Build list rows
         rows = []
         for item in list_items[:10]:  # Max 10 items in a list
+            # Handle different button formats
+            # Format 1: Simple format {'id': '...', 'title': '...'}
+            # Format 2: WhatsApp format {'type': 'reply', 'reply': {'id': '...', 'title': '...'}}
+            if 'reply' in item and isinstance(item['reply'], dict):
+                # WhatsApp format - extract from reply
+                item_id = item['reply'].get('id', '')
+                item_title = item['reply'].get('title', '')
+            elif 'id' in item:
+                # Simple format
+                item_id = item['id']
+                item_title = item.get('title', '')
+            else:
+                logger.warning(f"Skipping invalid list item format: {item}")
+                continue
+            
             row = {
-                'id': item['id'],
-                'title': item['title'][:24]  # Max 24 chars
+                'id': str(item_id),
+                'title': item_title[:24]  # Max 24 chars
             }
             if 'description' in item:
                 row['description'] = item['description'][:72]  # Max 72 chars

@@ -11,23 +11,16 @@
     
     "ask_full_name": {
       "id": "ask_full_name",
-      "message": "היי! 👋 ברוכים הבאים להייקר 🚗✨\n\nהבוט החכם שיעזור לך למצוא טרמפים או לתת טרמפים! 😄\n\nבואו נכיר! מה השם המלא שלך?\n(השם יעזור לנהגים וטרמפיסטים לזהות אותך) 🎭",
+      "message": "היי! 👋 ברוכים הבאים להייקר 🚗✨\n\nהבוט החכם של ישוב גברעם שיעזור לך למצוא טרמפים או לתת טרמפים! 😄\n\nבואו נכיר! מה השם המלא שלך?\n(השם יעזור לנהגים וטרמפיסטים לזהות אותך) 🎭",
       "expected_input": "text",
       "save_to": "full_name",
-      "next_state": "ask_settlement"
-    },
-    
-    "ask_settlement": {
-      "id": "ask_settlement",
-      "message": "נחמד להכיר! 😊\n\nועכשיו ספר לי - באיזה ישוב אתה גר? 🏡\n(כדי שנדע מאיפה להתחיל את המסע שלך)",
-      "expected_input": "text",
-      "save_to": "home_settlement",
+      "action": "set_gevaram_as_home",
       "next_state": "ask_user_type"
     },
     
     "ask_user_type": {
       "id": "ask_user_type",
-      "message": "מעולה! 🎉\n\nעכשיו השאלה הגדולה - מי אתה בעולם הטרמפים?\n\n1. 🚗🚶 גיבור על! (גם נהג וגם טרמפיסט)\n2. 🚶 טרמפיסט (מחפש טרמפים)\n3. 🚗 נהג (נותן טרמפים)",
+      "message": "היי {full_name}! 🎉\n\nעכשיו השאלה הגדולה, {full_name} - מי אתה בעולם הטרמפים?\n\n1. 🚗🚶 גיבור על! (גם נהג וגם טרמפיסט)\n2. 🚶 טרמפיסט (מחפש טרמפים)\n3. 🚗 נהג (נותן טרמפים)",
       "expected_input": "choice",
       "options": {
         "1": {
@@ -77,7 +70,7 @@
     
     "ask_when": {
       "id": "ask_when",
-      "message": "מצוין! 👌\n\nאז מתי אתה צריך להגיע? ⏰\n\n1. 🏃 היום/מחר - גמיש עם השעות\n   (אתן טווח שעות רחב, למשל 08:00-10:00)\n\n2. 📅 תאריך ושעה מדויקים בעתיד\n   (למשל: בעוד שבוע ב-14:30)",
+      "message": "מצוין! 👌\n\nאז מתי אתה צריך להגיע ל-{destination}? ⏰\n\n1. 🏃 היום/מחר - גמיש עם השעות\n   (אתן טווח שעות רחב, למשל 08:00-10:00)\n\n2. 📅 תאריך ושעה מדויקים בעתיד\n   (למשל: בעוד שבוע ב-14:30)",
       "expected_input": "choice",
       "options": {
         "1": {
@@ -95,7 +88,7 @@
     
     "ask_time_range": {
       "id": "ask_time_range",
-      "message": "אז מה טווח השעות שמתאים לך? ⏰\n\nכתוב טווח של שעתיים-שלוש בפורמט:\nשעת התחלה-שעת סיום\n\n💡 דוגמאות:\n• 08:00-10:00 (בוקר)\n• 14:00-17:00 (אחר הצהריים)\n• 18:00-20:00 (ערב)\n\n🎯 טיפ: ככל שהטווח יותר גמיש - יותר סיכוי למצוא נהג! 😉",
+      "message": "אז מה טווח השעות שמתאים לך להגיע ל-{destination}? ⏰\n\nכתוב טווח שעות בפורמט:\nשעת התחלה-שעת סיום\n\n💡 דוגמאות (הכי פשוט!):\n• 7-9 (פשוט שעות - הכי קל! 😊)\n• 08:00-10:00 (פורמט מלא)\n• 14:30-17:00 (עם דקות)\n\n🎯 טיפ: ככל שהטווח יותר גמיש - יותר סיכוי למצוא נהג! 😉",
       "expected_input": "text",
       "save_to": "time_range",
       "next_state": "complete_ride_request"
@@ -103,7 +96,7 @@
     
     "ask_specific_datetime": {
       "id": "ask_specific_datetime",
-      "message": "אוקיי, אז מה התאריך והשעה? 📅⏰\n\nכתוב בפורמט הזה:\nיום/חודש/שנה שעה:דקות\n\n💡 דוגמאות:\n• 15/11/2025 14:30\n• 20/12/2025 08:00\n• מחר 10:00 (זה גם עובד! 😊)",
+      "message": "אוקיי, אז מה התאריך והשעה להגיע ל-{destination}? 📅⏰\n\nכתוב בפורמט הזה:\nיום/חודש/שנה שעה:דקות\n\n💡 דוגמאות:\n• 15/11/2025 14:30\n• 20/12/2025 08:00\n• מחר 10:00 (זה גם עובד! 😊)",
       "expected_input": "text",
       "save_to": "specific_datetime",
       "next_state": "complete_ride_request"
@@ -111,7 +104,7 @@
     
     "complete_ride_request": {
       "id": "complete_ride_request",
-      "message": "יאללה! 🎉 הבקשה שלך נרשמה במערכת!\n\nאני כבר מחפש לך נהג מתאים... 🔍🚗\n\nברגע שאמצא מישהו - תקבל התראה! 📲",
+      "message": "יאללה! 🎉 הבקשה שלך נרשמה במערכת!\n\n📋 המידע שלך:\n{user_summary}\n\nאני כבר מחפש לך נהג מתאים... 🔍🚗\n\nברגע שאמצא מישהו - תקבל התראה! 📲",
       "action": "save_ride_request",
       "next_state": "check_if_also_driver"
     },
@@ -177,7 +170,7 @@
     
     "ask_routine_days": {
       "id": "ask_routine_days",
-      "message": "נחמד! 📅\n\nבאיזה ימים בשבוע אתה נוסע לשם?\n\n💡 דרכים לכתוב:\n• א-ה (ראשון עד חמישי)\n• א,ג,ה (ימים ספציפיים בפסיקים)\n• כל יום\n• ראשון ושלישי\n• א-ו (ימים ארוכים? 😅)\n\n(כתוב בכל דרך שנוח לך!)",
+      "message": "נחמד! 📅\n\nבאיזה ימים בשבוע אתה נוסע ל-{routine_destination}?\n\n💡 דרכים לכתוב:\n• א-ה (ראשון עד חמישי)\n• א,ג,ה (ימים ספציפיים בפסיקים)\n• כל יום\n• ראשון ושלישי\n• א-ו (ימים ארוכים? 😅)\n\n(כתוב בכל דרך שנוח לך!)",
       "expected_input": "text",
       "save_to": "routine_days",
       "next_state": "ask_routine_departure_time"
@@ -185,7 +178,7 @@
     
     "ask_routine_departure_time": {
       "id": "ask_routine_departure_time",
-      "message": "אוקיי! ⏰\n\nבאיזו שעה אתה בדרך כלל יוצא מ-{home_settlement}?\n\n(פשוט כתוב את השעה, למשל: 07:00 או 14:30)",
+      "message": "אוקיי! ⏰\n\nבאיזו שעה אתה בדרך כלל יוצא מגברעם ל-{routine_destination}?\n\n(פשוט כתוב את השעה, למשל: 07:00 או 14:30)",
       "expected_input": "text",
       "save_to": "routine_departure_time",
       "next_state": "ask_routine_return_time"
@@ -277,48 +270,180 @@
     
     "registration_complete": {
       "id": "registration_complete",
-      "message": "יאללה! 🎉🎊 סיימנו!\n\nההרשמה הושלמה בהצלחה! ✅\n\nמעכשיו אני כאן בשבילך 24/7! 🚗💪\nכל פעם שתצטרך עזרה - פשוט תכתוב לי! 😊\n\nיש טרמפ! 🚙💨",
+      "message": "יאללה! 🎉🎊 סיימנו!\n\nההרשמה הושלמה בהצלחה! ✅\n\n📋 המידע שלך:\n{user_summary}\n\nמעכשיו אני כאן בשבילך 24/7! 🚗💪\nכל פעם שתצטרך עזרה - פשוט תכתוב לי! 😊\n\nיש טרמפ! 🚙💨",
       "action": "complete_registration",
       "next_state": "idle"
     },
     
     "registered_user_menu": {
       "id": "registered_user_menu",
-      "message": "היי {full_name}! 👋😊\n\nשמח לראות אותך שוב! 🚗✨\n\nמה תרצה לעשות היום?\n\n1. 🚶 מחפש טרמפ!\n   (צריך להגיע לאיזשהו מקום עכשיו)\n\n2. 🚗 לתת טרמפ\n   (אני נוהג ויש לי מקום פנוי)\n\n3. 📅 לתכנן נסיעה מראש\n   (להכין משהו לעוד כמה ימים)\n\n4. 🔄 לעדכן שגרת נסיעות (נהגים)\n   (לשנות יעדים, ימים או שעות)\n\n5. ✏️ לעדכן פרטים אישיים\n   (שם, ישוב, התראות...)\n\n6. 💬 עזרה\n   (הסבר איך להשתמש בבוט)",
+      "condition": "user_type_is_both",
+      "next_state": "registered_both_menu",
+      "else_next_state": "check_driver_or_hitchhiker"
+    },
+    
+    "check_driver_or_hitchhiker": {
+      "id": "check_driver_or_hitchhiker",
+      "condition": "user_is_driver",
+      "next_state": "registered_driver_menu",
+      "else_next_state": "registered_hitchhiker_menu"
+    },
+    
+    "registered_driver_menu": {
+      "id": "registered_driver_menu",
+      "message": "היי {full_name}! 👋😊\n\nשמח לראות אותך שוב! 🚗✨\n\n📋 המידע שלך:\n{user_summary}\n\nמה תרצה לעשות היום?\n\n1. 🔄 לעדכן שגרת נסיעות\n   (לשנות יעדים, ימים או שעות)\n\n2. 🚗 להודיע שאני עומד לצאת בקרוב\n   (יש לי מקום פנוי בנסיעה)\n\n3. 🔄 להתחיל הכל מחדש\n   (איפוס מלא)",
       "expected_input": "choice",
-      "condition": "user_registered",
       "options": {
         "1": {
-          "label": "🚶 מחפש טרמפ",
-          "value": "search_ride",
-          "next_state": "ask_destination_registered"
-        },
-        "2": {
-          "label": "🚗 לתת טרמפ",
-          "value": "offer_ride",
-          "next_state": "ask_offer_ride_details"
-        },
-        "3": {
-          "label": "📅 לתכנן נסיעה",
-          "value": "plan_trip",
-          "next_state": "ask_trip_planning"
-        },
-        "4": {
           "label": "🔄 עדכון שגרה",
           "value": "update_routine",
           "next_state": "ask_has_routine"
         },
-        "5": {
-          "label": "✏️ עדכון פרטים",
-          "value": "update_profile",
-          "next_state": "ask_what_to_update"
+        "2": {
+          "label": "🚗 עומד לצאת",
+          "value": "leaving_soon",
+          "next_state": "ask_driver_when_leaving"
         },
-        "6": {
-          "label": "💬 עזרה",
-          "value": "show_help",
-          "next_state": "show_help_menu"
+        "3": {
+          "label": "🔄 התחל מחדש",
+          "value": "restart",
+          "action": "restart_user"
         }
       }
+    },
+    
+    "registered_hitchhiker_menu": {
+      "id": "registered_hitchhiker_menu",
+      "message": "היי {full_name}! 👋😊\n\nשמח לראות אותך שוב! 🚗✨\n\n📋 המידע שלך:\n{user_summary}\n\nמה תרצה לעשות היום?\n\n1. 🚶 מחפש טרמפ!\n   (צריך להגיע לאיזשהו מקום)\n\n2. 🔄 להתחיל הכל מחדש\n   (איפוס מלא)",
+      "expected_input": "choice",
+      "options": {
+        "1": {
+          "label": "🚶 מחפש טרמפ",
+          "value": "search_ride",
+          "next_state": "ask_hitchhiker_when_need_ride"
+        },
+        "2": {
+          "label": "🔄 התחל מחדש",
+          "value": "restart",
+          "action": "restart_user"
+        }
+      }
+    },
+    
+    "registered_both_menu": {
+      "id": "registered_both_menu",
+      "message": "היי {full_name}! 👋😊\n\nשמח לראות אותך שוב! 🚗✨\n\n📋 המידע שלך:\n{user_summary}\n\nמה תרצה לעשות היום?\n\n1. 🚶 מחפש טרמפ\n   (צריך להגיע למקום)\n\n2. 🚗 נותן טרמפ\n   (עומד לצאת בקרוב)\n\n3. 🔄 עדכון שגרת נסיעות\n   (לשנות יעדים, ימים או שעות)\n\n4. 🔄 התחל מחדש\n   (איפוס מלא)",
+      "expected_input": "choice",
+      "options": {
+        "1": {
+          "label": "🚶 מחפש טרמפ",
+          "value": "search_ride",
+          "next_state": "ask_hitchhiker_when_need_ride"
+        },
+        "2": {
+          "label": "🚗 נותן טרמפ",
+          "value": "offer_ride",
+          "next_state": "ask_driver_when_leaving"
+        },
+        "3": {
+          "label": "🔄 עדכון שגרה",
+          "value": "update_routine",
+          "next_state": "ask_has_routine"
+        },
+        "4": {
+          "label": "🔄 התחל מחדש",
+          "value": "restart",
+          "action": "restart_user"
+        }
+      }
+    },
+    
+    "ask_driver_when_leaving": {
+      "id": "ask_driver_when_leaving",
+      "message": "מצוין! 🚗💨\n\nמתי אתה עומד לצאת?\n\n1. ⚡ ממש עכשיו\n2. ⏰ בחצי שעה הקרובה\n3. ⏱️ בשעה הקרובה\n4. 🕐 בשעות הקרובות (2-5 שעות)",
+      "expected_input": "choice",
+      "options": {
+        "1": {
+          "label": "⚡ ממש עכשיו",
+          "value": "now",
+          "next_state": "ask_driver_destination"
+        },
+        "2": {
+          "label": "⏰ בחצי שעה",
+          "value": "30min",
+          "next_state": "ask_driver_destination"
+        },
+        "3": {
+          "label": "⏱️ בשעה",
+          "value": "1hour",
+          "next_state": "ask_driver_destination"
+        },
+        "4": {
+          "label": "🕐 2-5 שעות",
+          "value": "2-5hours",
+          "next_state": "ask_driver_destination"
+        }
+      },
+      "save_to": "departure_timing"
+    },
+    
+    "ask_driver_destination": {
+      "id": "ask_driver_destination",
+      "message": "מעולה! 🎯\n\nלאן אתה עומד לנסוע?\n\n(כתוב את שם היעד)\n💡 למשל: ירושלים, תל אביב, חיפה, באר שבע...",
+      "expected_input": "text",
+      "save_to": "driver_destination",
+      "next_state": "confirm_driver_ride_offer"
+    },
+    
+    "confirm_driver_ride_offer": {
+      "id": "confirm_driver_ride_offer",
+      "message": "תודה רבה! 🙏✨\n\nהנסיעה שלך נרשמה במערכת!\n\n📋 המידע שלך:\n{user_summary}\n\nטרמפיסטים מתאימים יקבלו התראה 📲\n\nנסיעה בטוחה! 🚗💨",
+      "action": "save_driver_ride_offer",
+      "next_state": "idle"
+    },
+    
+    "ask_hitchhiker_when_need_ride": {
+      "id": "ask_hitchhiker_when_need_ride",
+      "message": "בסדר! 🚶💨\n\nלמתי אתה צריך את הטרמפ?\n\n1. ⚡ ממש עכשיו\n2. ⏰ בחצי שעה הקרובה\n3. ⏱️ בשעה הקרובה\n4. 🕐 בשעות הקרובות (2-5 שעות)",
+      "expected_input": "choice",
+      "options": {
+        "1": {
+          "label": "⚡ ממש עכשיו",
+          "value": "now",
+          "next_state": "ask_hitchhiker_destination"
+        },
+        "2": {
+          "label": "⏰ בחצי שעה",
+          "value": "30min",
+          "next_state": "ask_hitchhiker_destination"
+        },
+        "3": {
+          "label": "⏱️ בשעה",
+          "value": "1hour",
+          "next_state": "ask_hitchhiker_destination"
+        },
+        "4": {
+          "label": "🕐 2-5 שעות",
+          "value": "2-5hours",
+          "next_state": "ask_hitchhiker_destination"
+        }
+      },
+      "save_to": "ride_timing"
+    },
+    
+    "ask_hitchhiker_destination": {
+      "id": "ask_hitchhiker_destination",
+      "message": "מצוין! 🎯\n\nלאן אתה צריך להגיע?\n\n(כתוב את שם היעד)\n💡 למשל: ירושלים, תל אביב, חיפה, באר שבע...",
+      "expected_input": "text",
+      "save_to": "hitchhiker_destination",
+      "next_state": "confirm_hitchhiker_ride_request"
+    },
+    
+    "confirm_hitchhiker_ride_request": {
+      "id": "confirm_hitchhiker_ride_request",
+      "message": "יאללה! 🎉\n\nהבקשה שלך נרשמה במערכת!\n\n📋 המידע שלך:\n{user_summary}\n\nאני מחפש לך נהג מתאים... 🔍🚗\n\nברגע שאמצא - תקבל התראה! 📲",
+      "action": "save_hitchhiker_ride_request",
+      "next_state": "idle"
     },
     
     "ask_destination_registered": {
@@ -374,7 +499,7 @@
     
     "ask_what_to_update": {
       "id": "ask_what_to_update",
-      "message": "בסדר! בוא נעדכן את הפרטים שלך! ✏️\n\nמה תרצה לשנות?\n\n1. 👤 שם\n2. 🏡 ישוב מגורים\n3. 🎯 יעדים קבועים\n4. 🔔 העדפות התרעות",
+      "message": "בסדר! בוא נעדכן את הפרטים שלך! ✏️\n\nמה תרצה לשנות?\n\n1. 👤 שם\n2. 🎯 יעדים קבועים\n3. 🔔 העדפות התרעות",
       "expected_input": "choice",
       "options": {
         "1": {
@@ -383,16 +508,11 @@
           "next_state": "ask_full_name"
         },
         "2": {
-          "label": "🏡 ישוב",
-          "value": "settlement",
-          "next_state": "ask_settlement"
-        },
-        "3": {
           "label": "🎯 יעדים",
           "value": "destinations",
           "next_state": "ask_routine_destination"
         },
-        "4": {
+        "3": {
           "label": "🔔 התרעות",
           "value": "alerts",
           "next_state": "ask_alert_preference"
@@ -414,10 +534,15 @@
   
   "commands": {
     "חזור": "go_back",
+    "back": "go_back",
+    "אחורה": "go_back",
     "חדש": "restart",
+    "restart": "restart",
     "מחק": "delete_data",
     "עזרה": "show_help",
-    "תפריט": "show_menu"
+    "help": "show_help",
+    "תפריט": "show_menu",
+    "menu": "show_menu"
   }
 }
 

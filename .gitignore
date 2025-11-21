@@ -44,6 +44,13 @@ Thumbs.db
 *~
 PROJECT_STRUCTURE.txt
 
+# Test outputs and reports
+test_runs/
+test_validation.json
+
+# Development notes
+todo.md
+
 # ngrok
 ngrok
 ngrok.exe

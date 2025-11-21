@@ -7,13 +7,22 @@ import logging
 import re
 import os
 from typing import Dict, Any, Tuple, Optional
-from src.validation import validate_settlement, validate_days, validate_time, validate_time_range
+from src.validation import validate_settlement, validate_days, validate_time, validate_time_range, validate_name, validate_text_input
 from src.user_logger import UserLogger
 
 logger = logging.getLogger(__name__)
 
 class ConversationEngine:
     """Engine to process conversation flow"""
+    
+    # State type constants for validation
+    NAME_STATES = ['ask_full_name']
+    SETTLEMENT_STATES = ['ask_destination', 'ask_routine_destination', 
+                        'ask_default_destination_name', 'ask_hitchhiker_destination', 'ask_driver_destination']
+    DAYS_STATES = ['ask_routine_days']
+    TIME_STATES = ['ask_routine_departure_time', 'ask_routine_return_time']
+    TIME_RANGE_STATES = ['ask_time_range']
+    TEXT_STATES = ['ask_specific_datetime']
     
     def __init__(self, flow_file='conversation_flow.json', user_db=None, user_logger=None):
         # If relative path, look in src/ directory
@@ -65,10 +74,25 @@ class ConversationEngine:
         
         current_state_id = self.user_db.get_user_state(phone_number)
         
-        # If registered user sending message after idle, show menu
-        if current_state_id == 'idle' and self.user_db.is_registered(phone_number):
-            current_state_id = 'registered_user_menu'
-            self.user_db.set_user_state(phone_number, current_state_id)
+        # If registered user sending message after idle or registration_complete, show menu
+        # Also check if user has completed profile (has user_type) even if not marked as registered
+        if current_state_id in ['idle', 'registration_complete']:
+            profile = self.user_db.get_user(phone_number).get('profile', {})
+            is_registered = self.user_db.is_registered(phone_number)
+            has_user_type = profile.get('user_type') is not None
+            
+            if is_registered or has_user_type:
+                # If user has profile but not marked as registered, mark them now
+                if has_user_type and not is_registered:
+                    self.user_db.complete_registration(phone_number)
+                    logger.info(f"Marked user {phone_number} as registered (had profile)")
+                
+                # Move to idle first if in registration_complete
+                if current_state_id == 'registration_complete':
+                    self.user_db.set_user_state(phone_number, 'idle', {'last_state': 'idle'})
+                
+                current_state_id = 'registered_user_menu'
+                self.user_db.set_user_state(phone_number, current_state_id)
         
         # Get current state definition
         current_state = self.flow['states'].get(current_state_id)
@@ -135,9 +159,13 @@ class ConversationEngine:
             next_state = state.get('else_next_state')
             if next_state:
                 next_state_def = self.flow['states'].get(next_state)
-                message = self._get_state_message(phone_number, next_state_def)
-                buttons = self._build_buttons(next_state_def)
-                return message, next_state, buttons
+                if next_state_def:
+                    # If next state is also a routing state, continue traversing
+                    if not next_state_def.get('message') and not next_state_def.get('expected_input'):
+                        return self._process_state(phone_number, next_state_def, user_input)
+                    message = self._get_state_message(phone_number, next_state_def)
+                    buttons = self._build_buttons(next_state_def)
+                    return message, next_state, buttons
             return "שגיאה: תנאי לא התקיים", 'idle', None
         
         # If this is the first time in this state (no previous input), send the message
@@ -149,15 +177,23 @@ class ConversationEngine:
             buttons = self._build_buttons(state)
             self.user_db.set_user_state(phone_number, state['id'], {'last_state': state['id']})
             
-            # If state has no message and no input expected, auto-advance
+            # Perform action if specified on first entry to state (for states without input)
+            if state.get('action') and not state.get('expected_input'):
+                self._perform_action(phone_number, state['action'], {})
+            
+            # If state has no message and no input expected, auto-advance through routing states
             if not message and not state.get('expected_input'):
                 next_state = self._get_next_state(phone_number, state, None)
                 if next_state:
                     next_state_def = self.flow['states'].get(next_state)
-                    message = self._get_state_message(phone_number, next_state_def)
-                    buttons = self._build_buttons(next_state_def)
-                    self.user_db.set_user_state(phone_number, next_state, {'last_state': next_state})
-                    return message, None, buttons
+                    if next_state_def:
+                        # Continue traversing routing states recursively
+                        if not next_state_def.get('message') and not next_state_def.get('expected_input'):
+                            return self._process_state(phone_number, next_state_def, user_input)
+                        message = self._get_state_message(phone_number, next_state_def)
+                        buttons = self._build_buttons(next_state_def)
+                        self.user_db.set_user_state(phone_number, next_state, {'last_state': next_state})
+                        return message, None, buttons
             
             # Return with buttons even for first time
             return message, None, buttons  # Don't advance yet, wait for user input
@@ -204,11 +240,39 @@ class ConversationEngine:
             return message, next_state, buttons
         
         else:
-            # No input expected, just move to next state
+            # No input expected - this is a routing state or final state
+            # Auto-advance to next state immediately
             next_state = self._get_next_state(phone_number, state, user_input)
-            message = self._get_state_message(phone_number, state)
-            buttons = self._build_buttons(self.flow['states'].get(next_state)) if next_state else None
-            return message, next_state, buttons
+            if next_state:
+                next_state_def = self.flow['states'].get(next_state)
+                if next_state_def:
+                    # If next state is also a routing state, continue traversing
+                    if not next_state_def.get('message') and not next_state_def.get('expected_input'):
+                        return self._process_state(phone_number, next_state_def, user_input)
+                    # Get message from next state
+                    message = self._get_state_message(phone_number, next_state_def)
+                    buttons = self._build_buttons(next_state_def)
+                    self.user_db.set_user_state(phone_number, next_state, {'last_state': next_state})
+                    return message, next_state, buttons
+            
+            # If no next state and we're in registration_complete or similar final state,
+            # move to idle and show menu for registered users
+            if state.get('id') == 'registration_complete':
+                # Move to idle state
+                self.user_db.set_user_state(phone_number, 'idle', {'last_state': 'idle'})
+                # Check if user is registered and show menu
+                profile = self.user_db.get_user(phone_number).get('profile', {})
+                is_registered = self.user_db.is_registered(phone_number)
+                has_user_type = profile.get('user_type') is not None
+                
+                if is_registered or has_user_type:
+                    # Show registered user menu
+                    menu_state = self.flow['states'].get('registered_user_menu')
+                    if menu_state:
+                        return self._process_state(phone_number, menu_state, user_input)
+            
+            # No next state - shouldn't happen, but handle gracefully
+            return "תודה! הפרטים נשמרו.", None, None
     
     def _handle_choice_input(self, phone_number: str, state: Dict[str, Any], user_input: str) -> Tuple[str, Optional[str], Optional[list]]:
         """Handle choice-based input
@@ -224,6 +288,10 @@ class ConversationEngine:
         
         if user_input in options:
             choice = options[user_input]
+            
+            # Check if action is restart_user
+            if choice.get('action') == 'restart_user':
+                return self._handle_restart(phone_number)
             
             # Save to profile if needed
             if state.get('save_to'):
@@ -247,8 +315,12 @@ class ConversationEngine:
             
             return message, next_state, buttons
         else:
-            # Invalid choice
-            error_msg = f"בחירה לא חוקית. אנא בחר מהאפשרויות."
+            # Invalid choice - provide clearer error message
+            options_list = list(state.get('options', {}).keys())
+            if options_list:
+                error_msg = f"בחירה לא חוקית. אנא בחר אחת מהאפשרויות: {', '.join(options_list)}"
+            else:
+                error_msg = "בחירה לא חוקית. אנא בחר מהאפשרויות המוצגות."
             buttons = self._build_buttons(state)
             return error_msg, None, buttons
     
@@ -307,8 +379,18 @@ class ConversationEngine:
                 suggestions = validation_result['suggestions']
                 # Save suggestions to context for interactive buttons
                 self.user_db.update_context(phone_number, 'pending_suggestions', suggestions)
-                error_msg = f"הישוב \"{user_input}\" לא נמצא במערכת. 🤔\n\n💡 התכוונת ל:\n"
+                # Only use "הישוב" message for settlement states, use original error message otherwise
+                if state_id in self.SETTLEMENT_STATES:
+                    error_msg = f"הישוב \"{user_input}\" לא נמצא במערכת. 🤔\n\n💡 התכוונת ל:\n"
                 # Note: suggestions will be shown as buttons, not text
+            else:
+                # Add helpful context about what input is expected
+                if state.get('expected_input') == 'text':
+                    # Get state message to provide context
+                    state_message = self._get_state_message(phone_number, state)
+                    if state_message:
+                        # Extract key instruction from message (first line or key phrase)
+                        error_msg = f"{error_msg}\n\n💡 {state_message.split('?')[0] if '?' in state_message else state_message[:50]}..."
             return error_msg, None
         
         # If validation passed, use normalized value
@@ -354,20 +436,16 @@ class ConversationEngine:
         Returns:
             Dict with keys: is_valid, normalized_value, error_message, suggestions
         """
-        # States that need settlement validation
-        settlement_states = ['ask_settlement', 'ask_destination', 'ask_routine_destination', 
-                           'ask_default_destination_name']
+        if state_id in self.NAME_STATES:
+            is_valid, normalized, error_msg = validate_name(user_input)
+            return {
+                'is_valid': is_valid,
+                'normalized_value': normalized,
+                'error_message': error_msg,
+                'suggestions': None
+            }
         
-        # States that need days validation
-        days_states = ['ask_routine_days']
-        
-        # States that need time validation
-        time_states = ['ask_routine_departure_time', 'ask_routine_return_time']
-        
-        # States that need time range validation
-        time_range_states = ['ask_time_range']
-        
-        if state_id in settlement_states:
+        elif state_id in self.SETTLEMENT_STATES:
             is_valid, exact_match, suggestions = validate_settlement(user_input)
             if is_valid:
                 return {
@@ -377,6 +455,7 @@ class ConversationEngine:
                     'suggestions': None
                 }
             else:
+                # Invalid settlement - require valid input
                 if suggestions:
                     return {
                         'is_valid': False,
@@ -392,7 +471,7 @@ class ConversationEngine:
                         'suggestions': None
                     }
         
-        elif state_id in days_states:
+        elif state_id in self.DAYS_STATES:
             is_valid, normalized, error_msg = validate_days(user_input)
             return {
                 'is_valid': is_valid,
@@ -401,7 +480,7 @@ class ConversationEngine:
                 'suggestions': None
             }
         
-        elif state_id in time_states:
+        elif state_id in self.TIME_STATES:
             is_valid, normalized, error_msg = validate_time(user_input)
             return {
                 'is_valid': is_valid,
@@ -410,7 +489,7 @@ class ConversationEngine:
                 'suggestions': None
             }
         
-        elif state_id in time_range_states:
+        elif state_id in self.TIME_RANGE_STATES:
             is_valid, normalized, error_msg = validate_time_range(user_input)
             return {
                 'is_valid': is_valid,
@@ -419,13 +498,103 @@ class ConversationEngine:
                 'suggestions': None
             }
         
-        # Default: no validation needed
+        elif state_id in self.TEXT_STATES:
+            # Generic text validation for datetime and other text fields
+            is_valid, normalized, error_msg = validate_text_input(user_input, min_length=1, max_length=200)
+            return {
+                'is_valid': is_valid,
+                'normalized_value': normalized,
+                'error_message': error_msg,
+                'suggestions': None
+            }
+        
+        # Default: basic validation (not empty, reasonable length)
+        user_input_stripped = user_input.strip()
+        if not user_input_stripped:
+            return {
+                'is_valid': False,
+                'normalized_value': None,
+                'error_message': "קלט לא יכול להיות ריק. אנא הכנס ערך תקין.",
+                'suggestions': None
+            }
+        
+        if len(user_input_stripped) > 1000:
+            return {
+                'is_valid': False,
+                'normalized_value': None,
+                'error_message': "קלט ארוך מדי. אנא הכנס עד 1000 תווים.",
+                'suggestions': None
+            }
+        
         return {
             'is_valid': True,
-            'normalized_value': user_input,
+            'normalized_value': user_input_stripped,
             'error_message': None,
             'suggestions': None
         }
+    
+    def _get_user_summary(self, phone_number: str) -> str:
+        """Generate a summary of user information for display in messages"""
+        profile = self.user_db.get_user(phone_number).get('profile', {})
+        user = self.user_db.get_user(phone_number)
+        routines = user.get('routines', []) if user else []
+        
+        summary_parts = []
+        
+        # Name
+        full_name = profile.get('full_name') or profile.get('whatsapp_name') or 'חבר/ה'
+        summary_parts.append(f"👤 שם: {full_name}")
+        
+        # Home settlement
+        home_settlement = profile.get('home_settlement', 'גברעם')
+        summary_parts.append(f"🏠 ישוב בית: {home_settlement}")
+        
+        # User type
+        user_type = profile.get('user_type', '')
+        user_type_names = {
+            'hitchhiker': '🚶 טרמפיסט',
+            'driver': '🚗 נהג',
+            'both': '🚗🚶 גיבור על'
+        }
+        if user_type:
+            summary_parts.append(f"🎭 סוג משתמש: {user_type_names.get(user_type, user_type)}")
+        
+        # Default destination
+        default_dest = profile.get('default_destination')
+        if default_dest:
+            summary_parts.append(f"⭐ יעד מועדף: {default_dest}")
+        
+        # Routines
+        routine_dest = profile.get('routine_destination')
+        routine_days = profile.get('routine_days')
+        routine_departure = profile.get('routine_departure_time')
+        routine_return = profile.get('routine_return_time')
+        
+        if routine_dest:
+            routine_info = f"🔄 שגרת נסיעות: {routine_dest}"
+            if routine_days:
+                routine_info += f" ({routine_days})"
+            if routine_departure:
+                routine_info += f" - יוצא ב-{routine_departure}"
+            if routine_return:
+                routine_info += f", חוזר ב-{routine_return}"
+            summary_parts.append(routine_info)
+        
+        # Alert preferences
+        alert_pref = profile.get('alert_preference') or profile.get('alert_frequency')
+        if alert_pref:
+            alert_names = {
+                'all': '🔔 על כל בקשה',
+                'my_destinations': '🎯 רק היעדים שלי',
+                'my_destinations_and_times': '🎯⏰ יעדים + שעות',
+                'specific_area_any_time': '📍 איזור שלי',
+                'specific_area_and_time': '📍⏰ איזור + שעות',
+                'none': '🔕 בלי התראות'
+            }
+            alert_display = alert_names.get(alert_pref, alert_pref)
+            summary_parts.append(f"📲 העדפות התראות: {alert_display}")
+        
+        return "\n".join(summary_parts) if summary_parts else ""
     
     def _get_state_message(self, phone_number: str, state: Dict[str, Any]) -> str:
         """Get message for state with variable substitution"""
@@ -440,7 +609,14 @@ class ConversationEngine:
         # Find all {variable} patterns
         variables = re.findall(r'\{(\w+)\}', message)
         for var in variables:
-            value = profile.get(var, f'[{var}]')
+            # Special handling for name variables - use WhatsApp name as fallback
+            if var in ['full_name', 'name']:
+                value = profile.get('full_name') or profile.get('whatsapp_name') or 'חבר/ה'
+            elif var == 'user_summary':
+                # Special variable for user summary
+                value = self._get_user_summary(phone_number)
+            else:
+                value = profile.get(var, f'[{var}]')
             message = message.replace(f'{{{var}}}', str(value))
         
         return message
@@ -474,6 +650,14 @@ class ConversationEngine:
             user_type = self.user_db.get_profile_value(phone_number, 'user_type')
             return user_type == 'both'
         
+        elif condition == 'user_is_driver':
+            user_type = self.user_db.get_profile_value(phone_number, 'user_type')
+            return user_type == 'driver'
+        
+        elif condition == 'user_is_hitchhiker':
+            user_type = self.user_db.get_profile_value(phone_number, 'user_type')
+            return user_type == 'hitchhiker'
+        
         elif condition == 'has_default_destination':
             default_dest = self.user_db.get_profile_value(phone_number, 'default_destination')
             return default_dest is not None and default_dest != ''
@@ -487,6 +671,15 @@ class ConversationEngine:
             self.user_db.complete_registration(phone_number)
             logger.info(f"User {phone_number} completed registration")
         
+        elif action == 'set_gevaram_as_home':
+            # Automatically set Gevaram as home settlement for all users
+            self.user_db.save_to_profile(phone_number, 'home_settlement', 'גברעם')
+            logger.info(f"Set home_settlement to 'גברעם' for {phone_number}")
+        
+        elif action == 'restart_user':
+            # This will trigger a restart via the restart handler
+            pass
+        
         elif action == 'save_ride_request':
             profile = self.user_db.get_user(phone_number).get('profile', {})
             request_data = {
@@ -496,6 +689,30 @@ class ConversationEngine:
             }
             self.user_db.add_ride_request(phone_number, request_data)
             logger.info(f"Saved ride request for {phone_number}")
+        
+        elif action == 'save_driver_ride_offer':
+            # Save driver ride offer with timing
+            profile = self.user_db.get_user(phone_number).get('profile', {})
+            offer_data = {
+                'type': 'driver_ride_offer',
+                'departure_timing': profile.get('departure_timing'),
+                'destination': profile.get('driver_destination'),
+                'origin': 'גברעם'
+            }
+            self.user_db.add_ride_request(phone_number, offer_data)
+            logger.info(f"Saved driver ride offer for {phone_number}: {offer_data}")
+        
+        elif action == 'save_hitchhiker_ride_request':
+            # Save hitchhiker ride request with timing
+            profile = self.user_db.get_user(phone_number).get('profile', {})
+            request_data = {
+                'type': 'hitchhiker_ride_request',
+                'ride_timing': profile.get('ride_timing'),
+                'destination': profile.get('hitchhiker_destination'),
+                'origin': 'גברעם'
+            }
+            self.user_db.add_ride_request(phone_number, request_data)
+            logger.info(f"Saved hitchhiker ride request for {phone_number}: {request_data}")
         
         elif action == 'save_planned_trip':
             self.user_db.add_ride_request(phone_number, data)
@@ -533,12 +750,16 @@ class ConversationEngine:
         # Delete all user data to start fresh
         self.user_db.delete_user_data(phone_number)
         
+        # Clear all context variables to ensure complete cleanup
+        # Create a fresh user first to ensure user exists
+        self.user_db.create_user(phone_number)
+        
+        # Explicitly reset context to ensure no state leaks
+        self.user_db.set_user_state(phone_number, 'initial', {})
+        
         # Note: We keep the logs (don't delete) so we have history
         # If you want to delete logs on restart, uncomment the next line:
         # self.user_logger.clear_user_logs(phone_number)
-        
-        # Create fresh user (this ensures user exists in database)
-        self.user_db.create_user(phone_number)
         
         # Get initial state and first actual state
         initial_state = self.flow['states']['initial']
@@ -566,7 +787,20 @@ class ConversationEngine:
             command = commands[message_text]
             
             if command == 'go_back':
-                return ("חזרה אחורה (לא מוטמע עדיין)", None)
+                # Simple back functionality - reset to previous state if possible
+                user = self.user_db.get_user(phone_number)
+                if user and user.get('state', {}).get('history'):
+                    history = user['state']['history']
+                    if len(history) > 1:
+                        # Get second-to-last state
+                        previous_state = history[-2]['state']
+                        self.user_db.set_user_state(phone_number, previous_state)
+                        prev_state_def = self.flow['states'].get(previous_state)
+                        if prev_state_def:
+                            message = self._get_state_message(phone_number, prev_state_def)
+                            buttons = self._build_buttons(prev_state_def)
+                            return (message, buttons)
+                return ("אין לאן לחזור. אתה בתחילת התהליך.", None)
             
             elif command == 'restart':
                 # Use the centralized restart handler which logs the event
@@ -610,16 +844,26 @@ class ConversationEngine:
             return None
         
         buttons = []
+        has_restart_option = False
+        
         for option_id, option_data in options.items():
             buttons.append({
                 'id': option_id,
                 'title': option_data.get('label', f'אפשרות {option_id}')
             })
+            # Check if this option is a restart option
+            label_lower = option_data.get('label', '').lower()
+            if (option_data.get('value') == 'restart' or 
+                option_data.get('action') == 'restart_user' or 
+                'restart' in label_lower or
+                'התחל מחדש' in option_data.get('label', '') or
+                'איפוס' in option_data.get('label', '')):
+                has_restart_option = True
         
-        # Add restart button
+        # Add restart button only if not already present in options
         # If we have 3 or fewer buttons, it will become a list (supports up to 10)
         # If we already have many buttons, add restart as last option
-        if len(buttons) < 10:
+        if not has_restart_option and len(buttons) < 10:
             buttons.append({
                 'id': 'restart_button',
                 'title': '🔄 התחל מחדש',
