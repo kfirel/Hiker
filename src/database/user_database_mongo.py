@@ -107,6 +107,7 @@ class UserDatabaseMongo:
                 "user_type": mongo_user.get("user_type"),
                 "default_destination": mongo_user.get("default_destination"),
                 "alert_preference": mongo_user.get("alert_preference"),
+                "share_name_with_hitchhiker": mongo_user.get("share_name_with_hitchhiker"),
             },
             "state": {
                 "current_state": mongo_user.get("current_state", "initial"),

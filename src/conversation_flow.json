@@ -50,7 +50,7 @@
         "1": {
           "label": "✅ כן, עכשיו!",
           "value": "yes",
-          "next_state": "ask_destination"
+          "next_state": "ask_hitchhiker_when_need_ride"
         },
         "2": {
           "label": "⏰ לא, מאוחר יותר",
@@ -113,7 +113,7 @@
       "id": "check_if_also_driver",
       "condition": "user_type_is_both",
       "next_state": "ask_has_routine",
-      "else_next_state": "idle"
+      "else_next_state": "registration_complete"
     },
     
     "ask_set_default_destination": {
@@ -190,6 +190,7 @@
       "message": "מעולה! 🔄\n\nובאיזו שעה אתה בדרך כלל *יוצא* מ-{routine_destination} בחזרה?\n\n(לא שעת הגעה - אלא באיזו שעה אתה מתחיל לנסוע חזרה)\n💡 למשל: 18:00\n\n(כן, גם בדרך חזרה אפשר לתת טרמפ! 😊)",
       "expected_input": "text",
       "save_to": "routine_return_time",
+      "action": "save_routine_and_match",
       "next_state": "ask_another_routine_destination"
     },
     
@@ -220,18 +221,40 @@
           "label": "🔔 על הכל",
           "value": "all",
           "save_to": "alert_preference",
-          "next_state": "registration_complete"
+          "next_state": "ask_share_name_preference"
         },
         "2": {
           "label": "🎯 היעדים שלי בלבד",
           "value": "my_destinations",
           "save_to": "alert_preference",
-          "next_state": "registration_complete"
+          "next_state": "ask_share_name_preference"
         },
         "3": {
           "label": "🎯⏰ יעדים + שעות (מומלץ!)",
           "value": "my_destinations_and_times",
           "save_to": "alert_preference",
+          "next_state": "ask_share_name_preference"
+        }
+      }
+    },
+    
+    "ask_share_name_preference": {
+      "id": "ask_share_name_preference",
+      "message": "כשאמצא לך טרמפיסט מתאים - אני אוכל לשלוח לו את הפרטים שלך ישירות? 📲\n\n1. בטח! 👍\n2. מעדיף שתשאל אותי לפני 🤔",
+      "expected_input": "choice",
+      "options": {
+        "1": {
+          "label": "בטח! 👍",
+          "value": "always",
+          "save_to": "share_name_with_hitchhiker",
+          "message": "מעולה! 👍\n\nאני אשלח את הפרטים שלך לטרמפיסטים ישירות כשאמצא התאמה.",
+          "next_state": "registration_complete"
+        },
+        "2": {
+          "label": "מעדיף שתשאל אותי לפני 🤔",
+          "value": "ask",
+          "save_to": "share_name_with_hitchhiker",
+          "message": "בסדר! 👍\n\nאני אשאל אותך בכל פעם לפני שאשלח את הפרטים שלך.",
           "next_state": "registration_complete"
         }
       }

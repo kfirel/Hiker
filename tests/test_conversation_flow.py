@@ -10,17 +10,70 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import json
-from src.user_database import UserDatabase
+import logging
+
+# Configure logging to see matching service calls
+from src.logging_config import setup_logging
+setup_logging(level=logging.INFO)
+
+from src.database.user_database_mongo import UserDatabaseMongo
 from src.conversation_engine import ConversationEngine
 
 class ConversationTester:
     """Test conversation flow scenarios"""
     
     def __init__(self):
-        self.user_db = UserDatabase('test_user_data.json')
+        """Initialize tester with MongoDB mock (required)"""
+        # Use MongoDB mock (required - no JSON fallback)
+        try:
+            import mongomock
+            from src.database.mongodb_client import MongoDBClient
+            
+            # Create mock MongoDB client
+            mock_client = mongomock.MongoClient()
+            mock_mongo = MongoDBClient.__new__(MongoDBClient)
+            mock_mongo.client = mock_client
+            mock_mongo.db_name = "test_hiker_db"
+            mock_mongo.db = mock_client[mock_mongo.db_name]
+            mock_mongo.connection_string = "mongomock://localhost"
+            
+            # Create indexes (handle errors gracefully for mongomock)
+            try:
+                mock_mongo._create_indexes()
+            except Exception:
+                pass  # mongomock may not support all index operations
+            
+            # Create UserDatabaseMongo with mock
+            self.user_db = UserDatabaseMongo(mongo_client=mock_mongo)
+            
+            print("✅ Using MongoDB mock for testing (matching service enabled)")
+        except ImportError:
+            raise ImportError("mongomock is required for tests. Install with: pip install mongomock")
+        
         from src.user_logger import UserLogger
         self.user_logger = UserLogger()
         self.conversation_engine = ConversationEngine(user_db=self.user_db, user_logger=self.user_logger)
+        
+        # If using MongoDB, ensure matching service is initialized
+        if hasattr(self.user_db, '_use_mongo') and self.user_db._use_mongo:
+            from src.services.matching_service import MatchingService
+            from src.services.notification_service import NotificationService
+            from tests.mock_whatsapp_client import MockWhatsAppClient
+            
+            matching_service = MatchingService(self.user_db.mongo)
+            self.whatsapp_client = MockWhatsAppClient(user_logger=self.user_logger)
+            notification_service = NotificationService(self.user_db.mongo, self.whatsapp_client, self.user_logger)
+            
+            # Update action executor with services
+            self.conversation_engine.action_executor.matching_service = matching_service
+            self.conversation_engine.action_executor.notification_service = notification_service
+        else:
+            # Fallback: create a mock WhatsApp client even if MongoDB is not available
+            from tests.mock_whatsapp_client import MockWhatsAppClient
+            self.whatsapp_client = MockWhatsAppClient(user_logger=self.user_logger)
+            
+            print("✅ Matching and notification services initialized")
+        
         self.test_phone = "test_972500000000"
         self.results = []
     
@@ -43,6 +96,12 @@ class ConversationTester:
         print(f"\n📱 Step {step_num}: User sends: \"{message}\"")
         
         response, buttons = self.conversation_engine.process_message(self.test_phone, message)
+        
+        # Send response through WhatsApp client (this will automatically log it)
+        # This mimics the behavior in app.py where messages are sent after processing
+        if response:
+            current_state = self.conversation_engine.user_db.get_user_state(self.test_phone) if self.conversation_engine.user_db.user_exists(self.test_phone) else None
+            self.whatsapp_client.send_message(self.test_phone, response, buttons=buttons, state=current_state)
         
         print(f"🤖 Bot responds:")
         print(f"   Message: {response[:100]}..." if len(response) > 100 else f"   Message: {response}")
@@ -113,28 +172,32 @@ class ConversationTester:
         # Step 5: Looking for ride now - Yes
         response, buttons = self.send_message(
             "1", 5,
-            "לאיזה ישוב"
+            "למתי אתה צריך את הטרמפ"
         )
         
-        # Step 6: Destination
+        # Step 6: When - Now (uses new flow with matching)
         response, buttons = self.send_message(
-            "ירושלים", 6,
-            "למתי"
+            "1", 6,
+            "לאן אתה צריך להגיע"
         )
-        self.verify_user_data("destination", "ירושלים", 6)
+        self.verify_user_data("ride_timing", "now", 6)
         
-        # Step 7: When - Soon
+        # Step 7: Destination (this should trigger save_hitchhiker_ride_request with matching)
+        print("\n   🔍 Step 7: This should trigger 'save_hitchhiker_ride_request' action with matching")
         response, buttons = self.send_message(
-            "1", 7,
-            "טווח השעות"
+            "תל אביב", 7,
+            "הבקשה שלך נרשמה"
         )
+        self.verify_user_data("hitchhiker_destination", "תל אביב", 7)
         
-        # Step 8: Time range
-        response, buttons = self.send_message(
-            "08:00-10:00", 8,
-            "מעולה"
-        )
-        self.verify_user_data("time_range", "08:00-10:00", 8)
+        # Verify that matching service was called
+        if hasattr(self.conversation_engine.action_executor, 'matching_service') and \
+           self.conversation_engine.action_executor.matching_service:
+            print("   ✅ Matching service is available - check logs above for 'find_matching_drivers' call")
+            self.results.append(("PASS", 7, "Matching service available"))
+        else:
+            print("   ⚠️ Matching service not available - matching won't occur")
+            self.results.append(("FAIL", 7, "Matching service not available"))
         
         print("\n✅ Scenario 1 Complete: Hitchhiker registration with ride request")
     
@@ -176,9 +239,24 @@ class ConversationTester:
         self.send_message("07:00", 8, "באיזה שעה אתה יוצא מ")
         self.verify_user_data("routine_departure_time", "07:00", 8)
         
-        # Step 9: Return time
-        self.send_message("18:00", 9, "עוד יעד")
+        # Step 9: Return time (this should trigger save_routine_and_match action)
+        print("\n   🔍 Step 9: This should trigger 'save_routine_and_match' action")
+        print(f"   🔍 Matching service available: {hasattr(self.conversation_engine.action_executor, 'matching_service') and self.conversation_engine.action_executor.matching_service is not None}")
+        print(f"   🔍 User DB uses MongoDB: {hasattr(self.user_db, '_use_mongo') and getattr(self.user_db, '_use_mongo', False)}")
+        
+        response, buttons = self.send_message("18:00", 9, "עוד יעד")
         self.verify_user_data("routine_return_time", "18:00", 9)
+        
+        # Verify that matching service was called (check logs or matching happened)
+        # The action should have been executed - we can check if matching_service exists
+        if hasattr(self.conversation_engine.action_executor, 'matching_service') and \
+           self.conversation_engine.action_executor.matching_service:
+            print("   ✅ Matching service is available - check logs above for 'find_matching_hitchhikers' call")
+            self.results.append(("PASS", 9, "Matching service available"))
+        else:
+            print("   ⚠️ Matching service not available - matching won't occur")
+            print("   ⚠️ This means find_matching_hitchhikers won't be called")
+            self.results.append(("FAIL", 9, "Matching service not available"))
         
         # Step 10: No more destinations
         self.send_message("2", 10, "האם תרצה שאני אתריע")
@@ -187,6 +265,93 @@ class ConversationTester:
         self.send_message("3", 11, "ההרשמה הושלמה")
         
         print("\n✅ Scenario 2 Complete: Driver registration with routine")
+    
+    def test_matching_scenario(self):
+        """
+        Test Scenario: Driver creates routine, then hitchhiker requests ride to same destination
+        This should find a match!
+        """
+        self.clean_start()
+        print("\n🎬 SCENARIO: Matching Test - Driver Routine + Hitchhiker Request")
+        print("-" * 80)
+        
+        # First: Create a driver with routine to Tel Aviv
+        print("\n📋 PART 1: Creating Driver with Routine")
+        print("-" * 40)
+        
+        driver_phone = "test_driver_001"
+        self.user_db.delete_user_data(driver_phone)
+        self.user_db.create_user(driver_phone)
+        
+        # Register driver
+        self.conversation_engine.process_message(driver_phone, "שלום")
+        self.conversation_engine.process_message(driver_phone, "יוסי נהג")
+        self.conversation_engine.process_message(driver_phone, "חיפה")
+        self.conversation_engine.process_message(driver_phone, "3")  # Driver
+        self.conversation_engine.process_message(driver_phone, "1")  # Has routine
+        self.conversation_engine.process_message(driver_phone, "תל אביב")
+        self.conversation_engine.process_message(driver_phone, "א-ה")
+        self.conversation_engine.process_message(driver_phone, "07:00")
+        response, buttons = self.conversation_engine.process_message(driver_phone, "18:00")
+        
+        print(f"   ✅ Driver routine created: תל אביב, א-ה, 07:00")
+        
+        # Check if routine was saved
+        routines = list(self.user_db.mongo.get_collection("routines").find({"phone_number": driver_phone}))
+        if routines:
+            print(f"   ✅ Found {len(routines)} routine(s) in database")
+        else:
+            print("   ❌ No routines found in database!")
+        
+        # Second: Create a hitchhiker requesting ride to Tel Aviv
+        print("\n📋 PART 2: Creating Hitchhiker Request")
+        print("-" * 40)
+        
+        hitchhiker_phone = "test_hitchhiker_001"
+        self.user_db.delete_user_data(hitchhiker_phone)
+        self.user_db.create_user(hitchhiker_phone)
+        
+        # Register hitchhiker
+        self.conversation_engine.process_message(hitchhiker_phone, "שלום")
+        self.conversation_engine.process_message(hitchhiker_phone, "דני טרמפיסט")
+        self.conversation_engine.process_message(hitchhiker_phone, "תל אביב")
+        self.conversation_engine.process_message(hitchhiker_phone, "2")  # Hitchhiker
+        self.conversation_engine.process_message(hitchhiker_phone, "1")  # Looking now
+        self.conversation_engine.process_message(hitchhiker_phone, "1")  # Now
+        print("\n   🔍 Sending destination - should trigger matching...")
+        response, buttons = self.conversation_engine.process_message(hitchhiker_phone, "תל אביב")
+        
+        print(f"   ✅ Hitchhiker request created: תל אביב")
+        
+        # Check if ride request was saved
+        ride_requests = list(self.user_db.mongo.get_collection("ride_requests").find({"requester_phone": hitchhiker_phone}))
+        if ride_requests:
+            print(f"   ✅ Found {len(ride_requests)} ride request(s) in database")
+            for req in ride_requests:
+                print(f"      - Destination: {req.get('destination')}, Type: {req.get('type')}")
+        else:
+            print("   ❌ No ride requests found in database!")
+        
+        # Check if matches were created
+        print("\n📋 PART 3: Checking for Matches")
+        print("-" * 40)
+        
+        matches = list(self.user_db.mongo.get_collection("matches").find({}))
+        if matches:
+            print(f"   ✅ Found {len(matches)} match(es) in database!")
+            for match in matches:
+                print(f"      - Match ID: {match.get('match_id')}, Status: {match.get('status')}")
+            self.results.append(("PASS", 1, "Matches found"))
+        else:
+            print("   ❌ No matches found!")
+            print("   ⚠️ This means matching didn't work")
+            self.results.append(("FAIL", 1, "No matches found"))
+        
+        # Cleanup
+        self.user_db.delete_user_data(driver_phone)
+        self.user_db.delete_user_data(hitchhiker_phone)
+        
+        print("\n✅ Matching Test Complete")
     
     def test_both_scenario(self):
         """
@@ -440,6 +605,7 @@ def main():
         # Run all scenarios
         tester.test_hitchhiker_scenario()
         tester.test_driver_scenario()
+        tester.test_matching_scenario()  # Test actual matching
         tester.test_both_scenario()
         tester.test_registered_user_menu()
         tester.test_special_commands()

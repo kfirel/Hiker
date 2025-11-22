@@ -31,6 +31,7 @@ class IntegrationScenarioTester:
         self.engine = engine
         self.mongo_db = mongo_db
         self.whatsapp_client = whatsapp_client
+        self.user_logger = engine.user_logger if hasattr(engine, 'user_logger') else None
         self.scenario_data = {
             'users': {},
             'conversations': [],
@@ -86,9 +87,15 @@ class IntegrationScenarioTester:
             
             # Process setup messages
             for msg in setup_messages:
-                interaction = self._process_message(phone, msg, user_id)
-                if interaction:
-                    all_interactions.append(interaction)
+                result = self._process_message(phone, msg, user_id)
+                if result:
+                    if isinstance(result, tuple):
+                        interaction, notification_interactions = result
+                        all_interactions.append(interaction)
+                        # Add notification interactions for recipients
+                        all_interactions.extend(notification_interactions)
+                    else:
+                        all_interactions.append(result)
                 # No sleep needed - MongoDB operations are synchronous
             
             # Process action messages
@@ -102,14 +109,76 @@ class IntegrationScenarioTester:
                     else:
                         logger.warning(f"Could not find match ID for {phone}, using original message: {msg}")
                 
+                # Check if this is an approval message ("1" or "approve_") and if there's an auto-approval match
+                # In that case, skip this message as auto-approval already happened
+                if msg == '1' or msg.startswith('approve_') or msg.startswith('1_'):
+                    driver = self.mongo_db.mongo.get_collection("users").find_one({"phone_number": phone})
+                    if driver:
+                        # Check if there's a match marked for auto-approval (auto_approve=True) or already auto-approved
+                        auto_approved_match = self.mongo_db.mongo.get_collection("matches").find_one({
+                            "driver_id": driver['_id'],
+                            "$or": [
+                                {"auto_approve": True},
+                                {"is_auto_approval": True, "status": "approved"}
+                            ]
+                        })
+                        if auto_approved_match:
+                            logger.info(f"Skipping approval message '{msg}' for driver {phone} - match was already auto-approved or marked for auto-approval")
+                            continue  # Skip this message, auto-approval already happened or will happen
+                
                 # Log which message we're processing (for debugging)
                 logger.debug(f"Processing action message {idx+1}/{len(action_messages)} for {phone}: '{msg}'")
                 
-                interaction = self._process_message(phone, msg, user_id)
-                if interaction:
-                    all_interactions.append(interaction)
+                result = self._process_message(phone, msg, user_id)
+                if result:
+                    if isinstance(result, tuple):
+                        interaction, notification_interactions = result
+                        all_interactions.append(interaction)
+                        # Add notification interactions for recipients
+                        all_interactions.extend(notification_interactions)
+                    else:
+                        all_interactions.append(result)
                 else:
                     logger.warning(f"No interaction returned for message '{msg}' from {phone}")
+                
+                # After message is sent, check if we need to process auto-approvals
+                # This ensures hitchhiker gets confirmation message first, then approval notification
+                user_context = self.mongo_db.get_user_context(phone)
+                pending_ride_request_id = user_context.get('pending_auto_approval_ride_request_id')
+                if pending_ride_request_id:
+                    from bson import ObjectId
+                    logger.info(f"🔄 Processing auto-approvals for ride request {pending_ride_request_id} after message sent")
+                    
+                    # Clear messages before auto-approval to capture only new messages
+                    self.whatsapp_client.clear_messages()
+                    
+                    self.engine.action_executor._process_auto_approvals(ObjectId(pending_ride_request_id))
+                    
+                    # Collect messages sent during auto-approval (to hitchhiker)
+                    sent_messages = self.whatsapp_client.get_sent_messages()
+                    auto_approval_interactions = []
+                    for sent_msg in sent_messages:
+                        recipient_phone = sent_msg['to']
+                        recipient_user_id = None
+                        if recipient_phone in self.scenario_data['users']:
+                            recipient_user_id = self.scenario_data['users'][recipient_phone].get('user_id')
+                        auto_approval_interaction = {
+                            'timestamp': datetime.now(),
+                            'user_id': recipient_user_id or recipient_phone,
+                            'user_phone': recipient_phone,
+                            'user_message': None,
+                            'bot_response': sent_msg['message'],
+                            'buttons': sent_msg.get('buttons'),
+                            'notifications_sent': [],
+                            'is_notification': True
+                        }
+                        auto_approval_interactions.append(auto_approval_interaction)
+                    
+                    # Add auto-approval interactions to all_interactions
+                    all_interactions.extend(auto_approval_interactions)
+                    
+                    # Clear the pending flag
+                    self.mongo_db.update_context(phone, 'pending_auto_approval_ride_request_id', None)
                 
                 # No sleep needed - MongoDB operations are synchronous
                 # State is updated immediately after each message
@@ -137,20 +206,309 @@ class IntegrationScenarioTester:
             'log_files': self._get_log_files()  # Add log files info
         }
     
-    def _process_message(self, phone: str, message: str, user_id: str) -> Optional[Dict[str, Any]]:
+    def _process_message(self, phone: str, message: str, user_id: str) -> Optional[tuple]:
         """Process a single message and return interaction data"""
         try:
             # Clear WhatsApp client messages before processing
             self.whatsapp_client.clear_messages()
             
-            # Process message
-            bot_response, buttons = self.engine.process_message(phone, message)
+            # Check if this is a name sharing response (check before approval/rejection)
+            if message.startswith('share_name_yes_') or message.startswith('share_name_no_'):
+                # Replace placeholder match_id with actual match_id
+                message = self._replace_name_sharing_match_id(phone, message)
+                
+                from src.services.approval_service import ApprovalService
+                approval_service = ApprovalService(self.mongo_db.mongo, self.whatsapp_client, self.user_logger)
+                success = approval_service.handle_name_sharing_response(phone, message)
+                if success:
+                    # Get confirmation message sent to driver
+                    sent_messages = self.whatsapp_client.get_sent_messages()
+                    bot_response = None
+                    buttons = None
+                    for sent_msg in reversed(sent_messages):
+                        if sent_msg['to'] == phone:
+                            bot_response = sent_msg['message']
+                            buttons = sent_msg.get('buttons')
+                            break
+                    if not bot_response:
+                        bot_response = "✅ הטרמפיסט קיבל את פרטי הקשר שלך."
+                else:
+                    bot_response = "❌ שגיאה בעיבוד הבקשה."
+                    buttons = None
+                # Logging is now automatic in WhatsAppClient.send_message
+                if bot_response:
+                    self.whatsapp_client.send_message(phone, bot_response, state="name_sharing_response")
+                # Get sent messages and continue with normal flow
+                sent_messages = self.whatsapp_client.get_sent_messages()
+                notifications = []
+                notification_interactions = []
+                for sent_msg in sent_messages:
+                    if sent_msg['to'] != phone:
+                        notifications.append({
+                            'to': sent_msg['to'],
+                            'message': sent_msg['message'],
+                            'buttons': sent_msg.get('buttons')
+                        })
+                        recipient_phone = sent_msg['to']
+                        recipient_user_id = None
+                        if recipient_phone in self.scenario_data['users']:
+                            recipient_user_id = self.scenario_data['users'][recipient_phone].get('user_id')
+                        notification_interaction = {
+                            'timestamp': datetime.now(),
+                            'user_id': recipient_user_id or recipient_phone,
+                            'user_phone': recipient_phone,
+                            'user_message': None,
+                            'bot_response': sent_msg['message'],
+                            'buttons': sent_msg.get('buttons'),
+                            'notifications_sent': [],
+                            'is_notification': True
+                        }
+                        notification_interactions.append(notification_interaction)
+                interaction = {
+                    'timestamp': datetime.now(),
+                    'user_id': user_id,
+                    'user_phone': phone,
+                    'user_message': message,
+                    'bot_response': bot_response,
+                    'buttons': buttons,
+                    'notifications_sent': notifications
+                }
+                if phone in self.scenario_data['users']:
+                    self.scenario_data['users'][phone]['conversations'].append(interaction)
+                return interaction, notification_interactions
+            
+            # Check if this is an approval/rejection message (needs special handling)
+            # Support both old format (approve_/reject_) and new format (1/2)
+            if (message.startswith('approve_') or message.startswith('reject_') or
+                message.startswith('1_') or message.startswith('2_') or
+                message in ['1', '2']):
+                # Handle match approval/rejection directly (similar to app.py's handle_match_response)
+                # This ensures ApprovalService is called and hitchhiker gets notified
+                try:
+                    # Extract match_id from button_id
+                    # Support multiple formats: approve_xxx, reject_xxx, 1_xxx, 2_xxx, or just "1"/"2"
+                    if message.startswith('approve_'):
+                        match_id = message.replace('approve_', '')
+                        is_approval = True
+                    elif message.startswith('reject_'):
+                        match_id = message.replace('reject_', '')
+                        is_approval = False
+                    elif message.startswith('1_'):
+                        match_id = message.replace('1_', '')
+                        is_approval = True
+                    elif message.startswith('2_'):
+                        match_id = message.replace('2_', '')
+                        is_approval = False
+                    elif message == '1':
+                        # Simple "1" - find pending match
+                        match_id = None
+                        is_approval = True
+                    elif message == '2':
+                        # Simple "2" - find pending match
+                        match_id = None
+                        is_approval = False
+                    else:
+                        logger.error(f"Invalid button ID format: {message}")
+                        bot_response = "❌ שגיאה בעיבוד הבקשה."
+                        buttons = None
+                        match_id = None
+                    
+                    if match_id is not None or message in ['1', '2']:
+                        # Handle case where match_id is empty or just "MATCH_" (from test inputs)
+                        # Or if user sent simple "1" or "2"
+                        if not match_id or match_id == 'MATCH_' or message in ['1', '2']:
+                            logger.info(f"Empty match_id in button_id: {message}, trying to find match from database")
+                            # Try to find the most recent pending match for this driver
+                            # Only if notification was sent (to avoid false positives during registration)
+                            driver = self.mongo_db.mongo.get_collection("users").find_one({"phone_number": phone})
+                            if driver:
+                                # First check if there's an auto-approved match (should skip manual approval)
+                                auto_approved_match = self.mongo_db.mongo.get_collection("matches").find_one({
+                                    "driver_id": driver['_id'],
+                                    "is_auto_approval": True,
+                                    "status": "approved"
+                                })
+                                if auto_approved_match:
+                                    logger.info(f"Found auto-approved match for driver {phone} - skipping manual approval message")
+                                    # Return None to skip this message
+                                    return None
+                                
+                                matches = list(self.mongo_db.mongo.get_collection("matches").find({
+                                    "driver_id": driver['_id'],
+                                    "status": "pending_approval",
+                                    "notification_sent_to_driver": True  # Only if notification was sent
+                                }).sort("matched_at", -1).limit(1))
+                                if matches:
+                                    match_id = matches[0].get('match_id', '')
+                                    logger.info(f"Found match_id from database: {match_id}")
+                                else:
+                                    # If "1" or "2" was sent but no pending match, treat as regular message
+                                    if message in ['1', '2']:
+                                        logger.info(f"User sent '{message}' but no pending match found, treating as regular message")
+                                        # Process as regular message through conversation engine
+                                        bot_response, buttons = self.engine.process_message(phone, message)
+                                        if bot_response:
+                                            current_state = self.engine.user_db.get_user_state(phone) if self.engine.user_db.user_exists(phone) else None
+                                            self.whatsapp_client.send_message(phone, bot_response, buttons=buttons, state=current_state)
+                                        # Get sent messages and continue with normal flow
+                                        sent_messages = self.whatsapp_client.get_sent_messages()
+                                        notifications = []
+                                        notification_interactions = []
+                                        for sent_msg in sent_messages:
+                                            if sent_msg['to'] != phone:
+                                                notifications.append({
+                                                    'to': sent_msg['to'],
+                                                    'message': sent_msg['message'],
+                                                    'buttons': sent_msg.get('buttons')
+                                                })
+                                                recipient_phone = sent_msg['to']
+                                                recipient_user_id = None
+                                                if recipient_phone in self.scenario_data['users']:
+                                                    recipient_user_id = self.scenario_data['users'][recipient_phone].get('user_id')
+                                                notification_interaction = {
+                                                    'timestamp': datetime.now(),
+                                                    'user_id': recipient_user_id or recipient_phone,
+                                                    'user_phone': recipient_phone,
+                                                    'user_message': None,
+                                                    'bot_response': sent_msg['message'],
+                                                    'buttons': sent_msg.get('buttons'),
+                                                    'notifications_sent': [],
+                                                    'is_notification': True
+                                                }
+                                                notification_interactions.append(notification_interaction)
+                                        interaction = {
+                                            'timestamp': datetime.now(),
+                                            'user_id': user_id,
+                                            'user_phone': phone,
+                                            'user_message': message,
+                                            'bot_response': bot_response,
+                                            'buttons': buttons,
+                                            'notifications_sent': notifications
+                                        }
+                                        if phone in self.scenario_data['users']:
+                                            self.scenario_data['users'][phone]['conversations'].append(interaction)
+                                        return interaction, notification_interactions
+                                    else:
+                                        logger.error(f"No pending matches found for driver {phone}")
+                                        bot_response = "מצטער, לא נמצאה בקשה ממתינה לאישור. נסה שוב מאוחר יותר."
+                                        buttons = None
+                            else:
+                                logger.error(f"Driver not found: {phone}")
+                                bot_response = "מצטער, לא נמצא משתמש במערכת. נסה שוב מאוחר יותר."
+                                buttons = None
+                        
+                        if match_id:
+                            from src.services.approval_service import ApprovalService
+                            
+                            # Clear messages before approval to capture only new messages
+                            self.whatsapp_client.clear_messages()
+                            
+                            approval_service = ApprovalService(self.mongo_db.mongo, self.whatsapp_client, self.user_logger)
+                            
+                            if is_approval:
+                                # Check if this is an auto-approval (driver shouldn't receive confirmation message)
+                                match = self.mongo_db.mongo.get_collection("matches").find_one({"match_id": match_id})
+                                is_auto_approval = match.get('is_auto_approval', False) if match else False
+                                
+                                success = approval_service.driver_approve(match_id, phone, is_auto_approval=is_auto_approval)
+                                if success:
+                                    # Don't send confirmation message if this was an auto-approval
+                                    if is_auto_approval:
+                                        logger.info(f"Auto-approval for match {match_id} - skipping confirmation message to driver")
+                                        # Auto-approval message is sent by _process_auto_approvals, so return None to skip
+                                        return None
+                                    
+                                    # Check if driver needs to be asked about name sharing
+                                    driver = self.mongo_db.mongo.get_collection("users").find_one({"phone_number": phone})
+                                    share_name_preference = driver.get('share_name_with_hitchhiker') if driver else None
+                                    if not share_name_preference and driver:
+                                        profile = driver.get('profile', {})
+                                        share_name_preference = profile.get('share_name_with_hitchhiker', 'ask')
+                                    if not share_name_preference:
+                                        share_name_preference = 'ask'
+                                    
+                                    if share_name_preference == 'ask':
+                                        # Driver will be asked separately - don't send confirmation yet
+                                        return None
+                                    else:
+                                        bot_response = "✅ אישרת את הבקשה! הטרמפיסט יקבל התראה ויצור איתך קשר בקרוב. 📲"
+                                else:
+                                    bot_response = "❌ שגיאה באישור הבקשה. נסה שוב או פנה לתמיכה."
+                            else:
+                                success = approval_service.driver_reject(match_id, phone)
+                                if success:
+                                    bot_response = "❌ דחית את הבקשה. הטרמפיסט ימשיך לחפש נהגים אחרים."
+                                else:
+                                    bot_response = "❌ שגיאה בדחיית הבקשה. נסה שוב או פנה לתמיכה."
+                            
+                            buttons = None
+                            # Logging is now automatic in WhatsAppClient.send_message (lowest level)
+                            self.whatsapp_client.send_message(phone, bot_response, state="match_response")
+                            
+                            # After approval, check if hitchhiker received notification
+                            # Get all sent messages (including those sent to hitchhiker by approval_service)
+                            sent_messages = self.whatsapp_client.get_sent_messages()
+                            notifications = []
+                            notification_interactions = []
+                            for sent_msg in sent_messages:
+                                if sent_msg['to'] != phone:
+                                    # This is a notification to another user (hitchhiker)
+                                    notifications.append({
+                                        'to': sent_msg['to'],
+                                        'message': sent_msg['message'],
+                                        'buttons': sent_msg.get('buttons')
+                                    })
+                                    recipient_phone = sent_msg['to']
+                                    recipient_user_id = None
+                                    if recipient_phone in self.scenario_data['users']:
+                                        recipient_user_id = self.scenario_data['users'][recipient_phone].get('user_id')
+                                    notification_interaction = {
+                                        'timestamp': datetime.now(),
+                                        'user_id': recipient_user_id or recipient_phone,
+                                        'user_phone': recipient_phone,
+                                        'user_message': None,
+                                        'bot_response': sent_msg['message'],
+                                        'buttons': sent_msg.get('buttons'),
+                                        'notifications_sent': [],
+                                        'is_notification': True
+                                    }
+                                    notification_interactions.append(notification_interaction)
+                            
+                            interaction = {
+                                'timestamp': datetime.now(),
+                                'user_id': user_id,
+                                'user_phone': phone,
+                                'user_message': message,
+                                'bot_response': bot_response,
+                                'buttons': buttons,
+                                'notifications_sent': notifications
+                            }
+                            if phone in self.scenario_data['users']:
+                                self.scenario_data['users'][phone]['conversations'].append(interaction)
+                            return interaction, notification_interactions
+                except Exception as e:
+                    logger.error(f"Error handling match response: {e}", exc_info=True)
+                    bot_response = f"מצטער, אירעה שגיאה. נסה שוב או הקש 'עזרה'."
+                    buttons = None
+                    self.whatsapp_client.send_message(phone, bot_response)
+            else:
+                # Process message normally
+                bot_response, buttons = self.engine.process_message(phone, message)
+                
+                # Send response through WhatsApp client (this will automatically log it)
+                # This mimics the behavior in app.py where messages are sent after processing
+                if bot_response:
+                    # Get current state for logging
+                    current_state = self.engine.user_db.get_user_state(phone) if self.engine.user_db.user_exists(phone) else None
+                    self.whatsapp_client.send_message(phone, bot_response, buttons=buttons, state=current_state)
             
             # Get sent messages from WhatsApp client
             sent_messages = self.whatsapp_client.get_sent_messages()
             
             # Check if notifications were sent (to other users)
             notifications = []
+            notification_interactions = []  # Separate interactions for recipients
+            
             for sent_msg in sent_messages:
                 if sent_msg['to'] != phone:  # Message to different user
                     notifications.append({
@@ -158,6 +516,25 @@ class IntegrationScenarioTester:
                         'message': sent_msg['message'],
                         'buttons': sent_msg.get('buttons')
                     })
+                    
+                    # Create separate interaction for the recipient
+                    recipient_phone = sent_msg['to']
+                    recipient_user_id = None
+                    # Find recipient user_id if exists
+                    if recipient_phone in self.scenario_data['users']:
+                        recipient_user_id = self.scenario_data['users'][recipient_phone].get('user_id')
+                    
+                    notification_interaction = {
+                        'timestamp': datetime.now(),
+                        'user_id': recipient_user_id or recipient_phone,
+                        'user_phone': recipient_phone,
+                        'user_message': None,  # No user message - this is a notification
+                        'bot_response': sent_msg['message'],
+                        'buttons': sent_msg.get('buttons'),
+                        'notifications_sent': [],  # No notifications sent from this interaction
+                        'is_notification': True  # Mark as notification
+                    }
+                    notification_interactions.append(notification_interaction)
             
             interaction = {
                 'timestamp': datetime.now(),
@@ -166,7 +543,7 @@ class IntegrationScenarioTester:
                 'user_message': message,
                 'bot_response': bot_response,
                 'buttons': buttons,
-                'notifications_sent': notifications
+                'notifications_sent': notifications  # Keep for reference, but won't display in sender's row
             }
             
             # Store in user's conversation history
@@ -177,10 +554,11 @@ class IntegrationScenarioTester:
             if any(keyword in message.lower() for keyword in ['approve', 'reject', '1', '2']):
                 self._take_db_snapshot()
             
-            return interaction
+            # Return both the main interaction and notification interactions
+            return interaction, notification_interactions
             
         except Exception as e:
-            return {
+            error_interaction = {
                 'timestamp': datetime.now(),
                 'user_id': user_id,
                 'user_phone': phone,
@@ -189,6 +567,7 @@ class IntegrationScenarioTester:
                 'buttons': None,
                 'error': str(e)
             }
+            return error_interaction, []
     
     def _replace_match_id(self, phone: str, message: str) -> str:
         """Replace placeholder match ID with actual match ID"""
@@ -222,6 +601,67 @@ class IntegrationScenarioTester:
             match_id = matches[0].get('match_id', '')
             if match_id:
                 logger.info(f"Replacing match_id for {phone}: {prefix}{match_id}")
+                return f"{prefix}{match_id}"
+            else:
+                logger.warning(f"Match found but no match_id field for {phone}")
+        else:
+            logger.warning(f"No pending matches found for driver {phone}")
+        
+        return message
+    
+    def _replace_name_sharing_match_id(self, phone: str, message: str) -> str:
+        """Replace placeholder match ID in name sharing button ID with actual match ID"""
+        if not hasattr(self.mongo_db, '_use_mongo') or not self.mongo_db._use_mongo:
+            return message
+        
+        if not (message.startswith('share_name_yes_') or message.startswith('share_name_no_')):
+            return message
+        
+        # Extract the prefix and match_id placeholder
+        if message.startswith('share_name_yes_'):
+            prefix = 'share_name_yes_'
+            original_match_id = message.replace('share_name_yes_', '')
+        else:
+            prefix = 'share_name_no_'
+            original_match_id = message.replace('share_name_no_', '')
+        
+        # If match_id is already provided and not empty, use it
+        if original_match_id:
+            return message
+        
+        # Find user
+        user = self.mongo_db.mongo.get_collection("users").find_one({"phone_number": phone})
+        if not user:
+            logger.warning(f"User not found for phone {phone}, cannot replace name sharing match_id")
+            return message
+        
+        # First try to find match from driver's document (stored at root level by _ask_driver_about_name_sharing)
+        # The match_id is stored directly in the user document, not in context
+        user = self.mongo_db.mongo.get_collection("users").find_one({"phone_number": phone})
+        if user:
+            # Check root level first (where _ask_driver_about_name_sharing stores it)
+            pending_match_id = user.get('pending_name_share_match_id')
+            if pending_match_id:
+                logger.info(f"Replacing name sharing match_id for {phone} from user document root: {prefix}{pending_match_id}")
+                return f"{prefix}{pending_match_id}"
+            
+            # Fallback: try to find from context (for backward compatibility)
+            context = self.mongo_db.get_user_context(phone)
+            pending_match_id = context.get('pending_name_share_match_id')
+            if pending_match_id:
+                logger.info(f"Replacing name sharing match_id for {phone} from context: {prefix}{pending_match_id}")
+                return f"{prefix}{pending_match_id}"
+        
+        # Fallback: find the most recent pending match for this driver
+        matches = list(self.mongo_db.mongo.get_collection("matches").find({
+            "driver_id": user['_id'],
+            "status": "pending_approval"
+        }).sort("matched_at", -1).limit(1))
+        
+        if matches:
+            match_id = matches[0].get('match_id', '')
+            if match_id:
+                logger.info(f"Found match_id from database for {phone}: {prefix}{match_id}")
                 return f"{prefix}{match_id}"
             else:
                 logger.warning(f"Match found but no match_id field for {phone}")
@@ -395,8 +835,8 @@ def test_all_integration_scenarios(integration_conversation_engine, mongo_db, in
     original_logs_dir = integration_conversation_engine.user_logger.logs_dir
     integration_conversation_engine.user_logger.logs_dir = str(test_logs_dir)
     
-    # Create WhatsApp client mock
-    whatsapp_client = MockWhatsAppClient()
+    # Create WhatsApp client mock with user logger (for automatic logging)
+    whatsapp_client = MockWhatsAppClient(user_logger=integration_conversation_engine.user_logger)
     
     # Update conversation engine services with mock WhatsApp client
     if hasattr(mongo_db, '_use_mongo') and mongo_db._use_mongo:
@@ -404,7 +844,7 @@ def test_all_integration_scenarios(integration_conversation_engine, mongo_db, in
         from src.services.notification_service import NotificationService
         
         matching_service = MatchingService(mongo_db.mongo)
-        notification_service = NotificationService(mongo_db.mongo, whatsapp_client)
+        notification_service = NotificationService(mongo_db.mongo, whatsapp_client, integration_conversation_engine.user_logger)
         integration_conversation_engine.action_executor.matching_service = matching_service
         integration_conversation_engine.action_executor.notification_service = notification_service
     

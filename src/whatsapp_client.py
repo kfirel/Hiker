@@ -8,10 +8,17 @@ logger = logging.getLogger(__name__)
 class WhatsAppClient:
     """Client for sending messages via WhatsApp Cloud API"""
     
-    def __init__(self):
+    def __init__(self, user_logger=None):
+        """
+        Initialize WhatsApp client
+        
+        Args:
+            user_logger: Optional UserLogger instance for automatic logging of sent messages
+        """
         self.phone_number_id = Config.WHATSAPP_PHONE_NUMBER_ID
         self.access_token = Config.WHATSAPP_ACCESS_TOKEN
         self.api_url = Config.WHATSAPP_API_URL
+        self.user_logger = user_logger
     
     def get_user_profile_name(self, phone_number: str) -> Optional[str]:
         """
@@ -35,7 +42,8 @@ class WhatsAppClient:
         }
         
         try:
-            response = requests.get(profile_url, headers=headers, params=params)
+            # Add timeout to prevent hanging (2 seconds for connect, 3 seconds for read)
+            response = requests.get(profile_url, headers=headers, params=params, timeout=(2, 3))
             if response.status_code == 200:
                 data = response.json()
                 # Profile name is usually in 'name' field
@@ -45,12 +53,14 @@ class WhatsAppClient:
                     return profile_name
             else:
                 logger.debug(f"Could not get profile for {phone_number}: {response.status_code}")
+        except requests.exceptions.Timeout:
+            logger.debug(f"Timeout getting profile name for {phone_number}")
         except Exception as e:
             logger.debug(f"Error getting profile name for {phone_number}: {str(e)}")
         
         return None
     
-    def send_message(self, to_phone_number, message_text, buttons=None):
+    def send_message(self, to_phone_number, message_text, buttons=None, state=None):
         """
         Send a text message via WhatsApp Cloud API
         
@@ -58,19 +68,26 @@ class WhatsAppClient:
             to_phone_number (str): Recipient's phone number (with country code, no +)
             message_text (str): Text message to send
             buttons (list): Optional list of button dicts for interactive message
+            state (str): Optional conversation state for logging
             
         Returns:
             bool: True if successful, False otherwise
         """
         # If buttons provided and <= 3, use reply buttons
         if buttons and len(buttons) <= 3:
-            return self.send_button_message(to_phone_number, message_text, buttons)
+            success = self.send_button_message(to_phone_number, message_text, buttons)
         # If buttons > 3, use list message
         elif buttons and len(buttons) > 3:
-            return self.send_list_message(to_phone_number, message_text, buttons)
+            success = self.send_list_message(to_phone_number, message_text, buttons)
         # No buttons, send regular text
         else:
-            return self._send_text_message(to_phone_number, message_text)
+            success = self._send_text_message(to_phone_number, message_text)
+        
+        # Log message automatically after successful send (lowest level logging)
+        if success and self.user_logger:
+            self.user_logger.log_bot_response(to_phone_number, message_text, state=state, buttons=buttons)
+        
+        return success
     
     def _send_text_message(self, to_phone_number, message_text):
         """Send a plain text message"""
@@ -89,15 +106,19 @@ class WhatsAppClient:
         }
         
         try:
-            response = requests.post(self.api_url, json=payload, headers=headers)
+            # Add timeout to prevent hanging (5 seconds for send, 2 seconds for connect)
+            response = requests.post(self.api_url, json=payload, headers=headers, timeout=(2, 5))
             response.raise_for_status()
             
             logger.info(f"Text message sent successfully to {to_phone_number}")
             return True
             
+        except requests.exceptions.Timeout as e:
+            logger.error(f"Timeout sending message to {to_phone_number}: {str(e)}")
+            return False
         except requests.exceptions.RequestException as e:
             logger.error(f"Failed to send message to {to_phone_number}: {str(e)}")
-            if hasattr(e.response, 'text'):
+            if hasattr(e, 'response') and e.response is not None and hasattr(e.response, 'text'):
                 logger.error(f"Response: {e.response.text}")
             return False
     
@@ -164,15 +185,19 @@ class WhatsAppClient:
             logger.info(f"Sending button message to {to_phone_number} with {len(button_components)} buttons")
             logger.debug(f"Button payload: {payload}")
             
-            response = requests.post(self.api_url, json=payload, headers=headers)
+            # Add timeout to prevent hanging (5 seconds for send, 2 seconds for connect)
+            response = requests.post(self.api_url, json=payload, headers=headers, timeout=(2, 5))
             response.raise_for_status()
             
             logger.info(f"Button message sent successfully to {to_phone_number}")
             return True
             
+        except requests.exceptions.Timeout as e:
+            logger.error(f"Timeout sending button message to {to_phone_number}: {str(e)}")
+            return False
         except requests.exceptions.RequestException as e:
             logger.error(f"Failed to send button message to {to_phone_number}: {str(e)}")
-            if hasattr(e, 'response') and hasattr(e.response, 'text'):
+            if hasattr(e, 'response') and e.response is not None and hasattr(e.response, 'text'):
                 logger.error(f"Response: {e.response.text}")
             logger.error(f"Failed payload: {payload}")
             return False
@@ -244,15 +269,19 @@ class WhatsAppClient:
         }
         
         try:
-            response = requests.post(self.api_url, json=payload, headers=headers)
+            # Add timeout to prevent hanging (5 seconds for send, 2 seconds for connect)
+            response = requests.post(self.api_url, json=payload, headers=headers, timeout=(2, 5))
             response.raise_for_status()
             
             logger.info(f"List message sent successfully to {to_phone_number}")
             return True
             
+        except requests.exceptions.Timeout as e:
+            logger.error(f"Timeout sending list message to {to_phone_number}: {str(e)}")
+            return False
         except requests.exceptions.RequestException as e:
             logger.error(f"Failed to send list message to {to_phone_number}: {str(e)}")
-            if hasattr(e.response, 'text'):
+            if hasattr(e, 'response') and e.response is not None and hasattr(e.response, 'text'):
                 logger.error(f"Response: {e.response.text}")
             return False
 

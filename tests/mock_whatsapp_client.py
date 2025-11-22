@@ -11,11 +11,18 @@ logger = logging.getLogger(__name__)
 class MockWhatsAppClient:
     """Mock WhatsApp client that simulates API calls without actually sending messages"""
     
-    def __init__(self):
+    def __init__(self, user_logger=None):
+        """
+        Initialize mock WhatsApp client
+        
+        Args:
+            user_logger: Optional UserLogger instance for automatic logging of sent messages
+        """
         self.sent_messages = []  # Store all sent messages for testing
         self.call_count = 0
+        self.user_logger = user_logger
     
-    def send_message(self, to_phone_number: str, message_text: str, buttons: Optional[List[Dict[str, Any]]] = None) -> bool:
+    def send_message(self, to_phone_number: str, message_text: str, buttons: Optional[List[Dict[str, Any]]] = None, state: Optional[str] = None) -> bool:
         """
         Mock send_message - stores the message instead of sending it
         
@@ -23,6 +30,7 @@ class MockWhatsAppClient:
             to_phone_number: Recipient's phone number
             message_text: Text message to send
             buttons: Optional list of button dicts
+            state: Optional conversation state for logging
             
         Returns:
             bool: Always True (simulating success)
@@ -39,6 +47,10 @@ class MockWhatsAppClient:
         logger.debug(f"Mock WhatsApp: Sent message to {to_phone_number}")
         if buttons:
             logger.debug(f"Mock WhatsApp: Message includes {len(buttons)} buttons")
+        
+        # Log message automatically after successful send (same as real WhatsAppClient)
+        if self.user_logger:
+            self.user_logger.log_bot_response(to_phone_number, message_text, state=state, buttons=buttons)
         
         return True
     

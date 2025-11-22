@@ -7,6 +7,11 @@ import logging
 import re
 import os
 from typing import Dict, Any, Tuple, Optional
+
+# Configure logging if not already configured
+from src.logging_config import setup_logging
+setup_logging()
+
 from src.validation import validate_settlement, validate_days, validate_time, validate_time_range, validate_name, validate_text_input, validate_datetime
 from src.user_logger import UserLogger
 from src.command_handlers import CommandHandler
@@ -38,20 +43,22 @@ class ConversationEngine:
         self.flow = self._load_flow()
         self.command_handler = CommandHandler(self)
         
-        # Initialize services if MongoDB is available
+        # Initialize services (MongoDB is always available now)
         matching_service = None
         notification_service = None
-        if hasattr(user_db, '_use_mongo') and user_db._use_mongo:
-            from src.services.matching_service import MatchingService
-            from src.services.notification_service import NotificationService
-            from src.whatsapp_client import WhatsAppClient
-            
-            matching_service = MatchingService(user_db.mongo)
-            # Notification service needs WhatsApp client - will be set in app.py
-            # For now, create without client (will be updated in app.py)
-            notification_service = None  # Will be set in app.py after WhatsApp client is initialized
+        
+        from src.services.matching_service import MatchingService
+        from src.services.notification_service import NotificationService
+        
+        matching_service = MatchingService(user_db.mongo)
+        # Notification service needs WhatsApp client - will be set in app.py
+        # For now, create without client (will be updated in app.py)
+        notification_service = None  # Will be set in app.py after WhatsApp client is initialized
         
         self.action_executor = ActionExecutor(user_db, matching_service, notification_service)
+        
+        # Store user_logger for later use when notification_service is set
+        self._user_logger = user_logger
         self.message_formatter = MessageFormatter(user_db)
     
     def _load_flow(self) -> Dict[str, Any]:
@@ -83,9 +90,7 @@ class ConversationEngine:
         command_response = self._check_commands(phone_number, message_text)
         if command_response:
             response_msg, buttons = command_response if isinstance(command_response, tuple) else (command_response, None)
-            # Log bot response
-            current_state = self.user_db.get_user_state(phone_number) if self.user_db.user_exists(phone_number) else None
-            self.user_logger.log_bot_response(phone_number, response_msg, current_state, buttons)
+            # Logging is now automatic in WhatsAppClient.send_message (lowest level)
             return response_msg, buttons
         
         # Get user's current state
@@ -97,22 +102,40 @@ class ConversationEngine:
         # If registered user sending message after idle or registration_complete, show menu
         # Also check if user has completed profile (has user_type) even if not marked as registered
         if current_state_id in ['idle', 'registration_complete']:
-            profile = self.user_db.get_user(phone_number).get('profile', {})
-            is_registered = self.user_db.is_registered(phone_number)
-            has_user_type = profile.get('user_type') is not None
-            
-            if is_registered or has_user_type:
-                # If user has profile but not marked as registered, mark them now
-                if has_user_type and not is_registered:
-                    self.user_db.complete_registration(phone_number)
-                    logger.info(f"Marked user {phone_number} as registered (had profile)")
-                
-                # Move to idle first if in registration_complete
-                if current_state_id == 'registration_complete':
-                    self.user_db.set_user_state(phone_number, 'idle', {'last_state': 'idle'})
-                
-                current_state_id = 'registered_user_menu'
+            user = self.user_db.get_user(phone_number)
+            if not user:
+                # User doesn't exist - restart registration
+                logger.info(f"User {phone_number} in {current_state_id} but doesn't exist, restarting registration")
+                current_state_id = 'initial'
                 self.user_db.set_user_state(phone_number, current_state_id)
+            else:
+                # Get profile from user document (MongoDB stores directly in user, not nested in 'profile')
+                profile = user.get('profile', {})
+                # Also check user document directly for user_type (MongoDB stores it at root level)
+                user_type = user.get('user_type') or profile.get('user_type')
+                is_registered = self.user_db.is_registered(phone_number)
+                has_user_type = user_type is not None
+                
+                logger.info(f"User {phone_number} in {current_state_id}: is_registered={is_registered}, has_user_type={has_user_type}, user_type={user_type}")
+                
+                if is_registered or has_user_type:
+                    # If user has profile but not marked as registered, mark them now
+                    if has_user_type and not is_registered:
+                        self.user_db.complete_registration(phone_number)
+                        logger.info(f"Marked user {phone_number} as registered (had profile)")
+                    
+                    # Move to idle first if in registration_complete
+                    if current_state_id == 'registration_complete':
+                        self.user_db.set_user_state(phone_number, 'idle', {'last_state': 'idle'})
+                    
+                    current_state_id = 'registered_user_menu'
+                    self.user_db.set_user_state(phone_number, current_state_id)
+                    logger.info(f"Moving user {phone_number} to registered_user_menu")
+                else:
+                    # User in idle but not registered - restart registration flow
+                    logger.warning(f"User {phone_number} in {current_state_id} but not registered (is_registered={is_registered}, has_user_type={has_user_type}), restarting registration")
+                    current_state_id = 'initial'
+                    self.user_db.set_user_state(phone_number, current_state_id)
         
         # Get current state definition
         current_state = self.flow['states'].get(current_state_id)
@@ -138,14 +161,37 @@ class ConversationEngine:
         
         # Move to next state BEFORE logging (so log shows correct state)
         if next_state:
+            logger.info(f"🔄 Moving to next_state: {next_state} (from state: {current_state_id})")
             # Set last_state to the new state (message was already shown in response)
             # Don't add to history here - it will be added when state actually changes
             self.user_db.set_user_state(phone_number, next_state, {'last_state': next_state}, add_to_history=True)
             
             # If next state has automatic message, append it (but ONLY if not already in response)
             next_state_def = self.flow['states'].get(next_state)
-            if next_state_def and not next_state_def.get('expected_input'):
-                # Automatic state (no input needed), process it immediately
+            if next_state_def:
+                logger.info(f"📋 Next state def: id={next_state_def.get('id')}, message={bool(next_state_def.get('message'))}, expected_input={next_state_def.get('expected_input')}, action={next_state_def.get('action')}")
+                
+                # Perform action if specified (important for states like confirm_hitchhiker_ride_request)
+                # Action should be executed regardless of whether message is already in response
+                if next_state_def.get('action') and not next_state_def.get('expected_input'):
+                    logger.info(f"✅ Executing action '{next_state_def.get('action')}' for state '{next_state}'")
+                    self.action_executor.execute(phone_number, next_state_def['action'], {})
+                    
+                    # Store ride request ID for auto-approval processing after message is sent
+                    # This will be handled in app.py after the message is sent
+                    if next_state_def.get('action') == 'save_hitchhiker_ride_request':
+                        from bson import ObjectId
+                        user = self.user_db.mongo.get_collection("users").find_one({"phone_number": phone_number})
+                        if user:
+                            ride_request = self.user_db.mongo.get_collection("ride_requests").find_one(
+                                {"requester_id": user['_id']},
+                                sort=[("created_at", -1)]
+                            )
+                            if ride_request:
+                                # Store ride request ID in user context for later processing
+                                self.user_db.update_context(phone_number, 'pending_auto_approval_ride_request_id', str(ride_request['_id']))
+                                logger.info(f"📝 Stored ride request {ride_request['_id']} for auto-approval processing after message is sent")
+                
                 next_message = self._get_state_message(phone_number, next_state_def)
                 # Check if message isn't already in response (avoid duplicates)
                 if next_message and next_message.strip() not in response:
@@ -163,8 +209,8 @@ class ConversationEngine:
                         if auto_next_state_def:
                             buttons = self._build_buttons(auto_next_state_def)
         
-        # Log bot response with the correct state (after all transitions)
-        self.user_logger.log_bot_response(phone_number, response, log_state, buttons)
+        # Logging is now automatic in WhatsAppClient.send_message (lowest level)
+        # We don't log here anymore - the message will be logged when it's actually sent
         
         return response, buttons
     
@@ -173,6 +219,39 @@ class ConversationEngine:
         
         Returns tuple of (message, next_state) or (message, next_state, buttons)
         """
+        
+        # Special handling for idle state - should have been handled in process_message
+        # But if we reach here, it means user is not registered, so restart registration
+        # BUT: Check if user is actually registered first (might be a race condition)
+        if state.get('id') == 'idle':
+            user = self.user_db.get_user(phone_number)
+            if user:
+                profile = user.get('profile', {})
+                user_type = user.get('user_type') or profile.get('user_type')
+                is_registered = self.user_db.is_registered(phone_number)
+                has_user_type = user_type is not None
+                
+                if is_registered or has_user_type:
+                    # User is registered - move to menu instead of restarting
+                    logger.info(f"User {phone_number} in idle but is registered, moving to registered_user_menu")
+                    self.user_db.set_user_state(phone_number, 'registered_user_menu', {'last_state': 'registered_user_menu'})
+                    menu_state = self.flow['states'].get('registered_user_menu')
+                    if menu_state:
+                        return self._process_state(phone_number, menu_state, user_input)
+            
+            logger.warning(f"User {phone_number} in idle state but not registered, restarting registration")
+            # Move to initial state to restart registration
+            self.user_db.set_user_state(phone_number, 'initial', {'last_state': 'initial'})
+            initial_state = self.flow['states'].get('initial')
+            if initial_state:
+                return self._process_state(phone_number, initial_state, user_input)
+            # Fallback to ask_full_name
+            ask_full_name_state = self.flow['states'].get('ask_full_name')
+            if ask_full_name_state:
+                message = self._get_state_message(phone_number, ask_full_name_state)
+                buttons = self._build_buttons(ask_full_name_state)
+                self.user_db.set_user_state(phone_number, 'ask_full_name', {'last_state': 'ask_full_name'})
+                return message, 'ask_full_name', buttons
         
         # Check state conditions
         if not self._check_condition(phone_number, state):
@@ -406,9 +485,11 @@ class ConversationEngine:
                 # Not registered or already confirmed - restart immediately
                 return self._handle_restart(phone_number)
             
-            # Save to profile if needed
-            if state.get('save_to'):
-                self.user_db.save_to_profile(phone_number, state['save_to'], choice['value'])
+            # Save to profile if needed (check both state and choice for save_to)
+            save_to_key = choice.get('save_to') or state.get('save_to')
+            if save_to_key:
+                self.user_db.save_to_profile(phone_number, save_to_key, choice['value'])
+                logger.info(f"Saved {save_to_key} = '{choice['value']}' for {phone_number}")
             
             # Perform action if specified
             if choice.get('action'):
@@ -431,14 +512,17 @@ class ConversationEngine:
                 next_state_message = self._get_state_message(phone_number, next_state_def)
                 buttons = self._build_buttons(next_state_def)
                 
-                # If choice has a custom message, use it instead of next state message
-                # But if next state is a routing state (no message), use choice message
+                # If choice has a custom message, combine it with next state message
+                # This allows showing both the response to the choice AND the next state message
                 if choice_message:
-                    message = choice_message
-                    # If next state is routing, we need to process it immediately
-                    # to ensure state is updated to idle before user sends next message
-                    if not next_state_message:
-                        # Next state is routing - process it recursively to get final state
+                    # If next state has a message, combine them (choice message first, then next state)
+                    if next_state_message:
+                        # Combine messages: choice response + next state message
+                        message = f"{choice_message}\n\n{next_state_message}"
+                    else:
+                        # Next state is routing - use choice message and process routing
+                        message = choice_message
+                        # Process routing states recursively to get final state
                         final_state = next_state_def
                         while final_state and not final_state.get('message') and not final_state.get('expected_input'):
                             final_next = self._get_next_state(phone_number, final_state, None)
@@ -449,6 +533,9 @@ class ConversationEngine:
                                     next_state_def = final_state
                                     next_state_message = self._get_state_message(phone_number, final_state)
                                     buttons = self._build_buttons(final_state)
+                                    # If final state has message, combine with choice message
+                                    if next_state_message:
+                                        message = f"{choice_message}\n\n{next_state_message}"
                                 else:
                                     break
                             else:
@@ -566,9 +653,17 @@ class ConversationEngine:
             self.user_db.save_to_profile(phone_number, state['save_to'], final_value)
             logger.info(f"Saved {state['save_to']} = '{final_value}' for {phone_number}")
         
-        # Perform action if specified
+        # Perform action if specified (but only if not already executed in next_state)
+        # Skip action here if next_state has the same action - it will be executed there
+        next_state = state.get('next_state')
+        next_state_def = self.flow['states'].get(next_state) if next_state else None
+        
         if state.get('action'):
-            self.action_executor.execute(phone_number, state['action'], {'input': final_value})
+            # Only execute if next_state doesn't have the same action
+            if not (next_state_def and next_state_def.get('action') == state.get('action')):
+                self.action_executor.execute(phone_number, state['action'], {'input': final_value})
+            else:
+                logger.debug(f"Skipping action '{state.get('action')}' - will be executed in next_state '{next_state}'")
         
         # Special handling: If registered user is updating name, return to show_my_info
         if state_id == 'ask_full_name' and self.user_db.is_registered(phone_number):
@@ -598,6 +693,9 @@ class ConversationEngine:
             if auto_next_state:
                 next_state_def = self.flow['states'].get(auto_next_state)
                 next_state = auto_next_state
+        
+        # Don't execute action here - it will be executed in _process_message when transitioning to next_state
+        # This prevents duplicate execution. The action is executed once in _process_message (line 161-162)
         
         # Get next state message
         message = self._get_state_message(phone_number, next_state_def)

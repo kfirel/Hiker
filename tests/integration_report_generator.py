@@ -405,14 +405,8 @@ class IntegrationReportGenerator:
             status_class = "success" if not has_error else "failed"
             status_text = "✅ PASSED" if not has_error else "❌ FAILED"
             
-            # Build data tables
-            data_tables_html = self._build_data_tables(scenario)
-            
             # Build chronological conversation table
             chronological_table_html = self._build_chronological_table(scenario)
-            
-            # Build log files section
-            log_files_html = self._build_log_files_section(scenario)
             
             # Build error message if failed
             error_html = ""
@@ -427,8 +421,6 @@ class IntegrationReportGenerator:
                 </div>
                 <div class="scenario-description">{scenario.get('scenario_description', 'No description')}</div>
                 {error_html}
-                {data_tables_html}
-                {log_files_html}
                 {chronological_table_html}
             </div>
             """
@@ -601,13 +593,6 @@ class IntegrationReportGenerator:
                             cell_html += '</div>'
                         cell_html += '</div>'
                     
-                    # Notifications sent to other users
-                    notifications = interaction.get('notifications_sent', [])
-                    for notif in notifications:
-                        cell_html += '<div class="notification-message">'
-                        cell_html += f'<strong>📨 → {self._escape_html(notif.get("to", ""))}:</strong><br>'
-                        cell_html += f'{self._escape_html(notif.get("message", ""))}'
-                        cell_html += '</div>'
                     
                     # Error if any
                     error = interaction.get('error')

@@ -285,3 +285,4 @@ State: ask_hitchhiker_when_need_ride (אמור להיות idle או registered_u
 **תאריך ניתוח**: 2025-11-22
 **מנתח**: AI Assistant
 
+

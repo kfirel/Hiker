@@ -9,16 +9,31 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.conversation_engine import ConversationEngine
-from src.user_database import UserDatabase
+from src.database.user_database_mongo import UserDatabaseMongo
+from src.database.mongodb_client import MongoDBClient
 import json
+import mongomock
 
 def test_interactive_suggestions():
     """Test that settlement suggestions are shown as interactive buttons"""
     
     print("🧪 Testing Interactive Suggestions Feature\n")
     
-    # Initialize
-    user_db = UserDatabase()
+    # Initialize MongoDB mock
+    mock_client = mongomock.MongoClient()
+    mock_mongo = MongoDBClient.__new__(MongoDBClient)
+    mock_mongo.client = mock_client
+    mock_mongo.db_name = "test_hiker_db"
+    mock_mongo.db = mock_client[mock_mongo.db_name]
+    mock_mongo.connection_string = "mongomock://localhost"
+    
+    # Create indexes (handle errors gracefully for mongomock)
+    try:
+        mock_mongo._create_indexes()
+    except Exception:
+        pass
+    
+    user_db = UserDatabaseMongo(mongo_client=mock_mongo)
     from src.user_logger import UserLogger
     user_logger = UserLogger()
     conversation_engine = ConversationEngine('conversation_flow.json', user_db, user_logger)

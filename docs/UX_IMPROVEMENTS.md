@@ -304,3 +304,4 @@ def parse_natural_time(text):
 כל השיפורים האלה יהפכו את המערכת ליותר ידידותית וקלה לשימוש! 🚀
 
 
+

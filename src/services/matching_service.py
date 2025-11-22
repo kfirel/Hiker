@@ -32,6 +32,7 @@ class MatchingService:
         Returns:
             List of matching driver documents with match scores
         """
+        logger.info(f"🔍 find_matching_drivers called: ride_request_id={ride_request.get('_id')}, destination={ride_request.get('destination')}")
         destination = ride_request.get('destination')
         origin = ride_request.get('origin', 'גברעם')
         time_info = self._parse_time_info(ride_request)
@@ -271,6 +272,175 @@ class MatchingService:
         )
         
         logger.info(f"Created {len(matches)} matches for ride request {ride_request_id}")
+        return matches
+
+    def find_matching_hitchhikers(self, driver_info: Dict[str, Any], destination: str, 
+                                 departure_time: str = None, days: str = None) -> List[Dict[str, Any]]:
+        """
+        Find matching hitchhikers for a driver routine or offer
+        
+        Args:
+            driver_info: Driver information dict with driver_id, driver_phone, etc.
+            destination: Destination of the driver's route
+            departure_time: Optional departure time (for routines)
+            days: Optional days of week (for routines)
+            
+        Returns:
+            List of matching hitchhiker ride requests with match scores
+        """
+        logger.info(f"🔍 find_matching_hitchhikers called: driver={driver_info.get('driver_phone')}, destination={destination}, departure_time={departure_time}, days={days}")
+        matching_requests = []
+        
+        # Search for active hitchhiker requests matching this destination
+        query = {
+            "type": "hitchhiker_request",
+            "destination": destination,
+            "status": {"$in": ["pending", "matched"]}  # Include matched but not yet approved
+        }
+        
+        active_requests = list(self.db.get_collection("ride_requests").find(query))
+        logger.info(f"🔍 Found {len(active_requests)} active hitchhiker requests for destination '{destination}'")
+        
+        for request in active_requests:
+            # Skip if already approved
+            if request.get('status') == 'approved':
+                continue
+            
+            hitchhiker = self.db.get_collection("users").find_one({"_id": request['requester_id']})
+            if not hitchhiker:
+                continue
+            
+            # Calculate match score
+            score = self._calculate_hitchhiker_match_score(
+                request, destination, departure_time, days
+            )
+            
+            matching_requests.append({
+                'ride_request_id': request['_id'],
+                'hitchhiker_id': request['requester_id'],
+                'hitchhiker_phone': request['requester_phone'],
+                'hitchhiker_name': hitchhiker.get('full_name') or hitchhiker.get('whatsapp_name'),
+                'score': score,
+                'destination': request.get('destination'),
+                'time_range': request.get('time_range'),
+                'specific_datetime': request.get('specific_datetime'),
+                'ride_timing': request.get('ride_timing')
+            })
+        
+        # Sort by score (highest first)
+        sorted_requests = sorted(matching_requests, key=lambda x: x['score'], reverse=True)
+        logger.info(f"✅ Found {len(sorted_requests)} matching hitchhikers (after scoring)")
+        return sorted_requests
+    
+    def _calculate_hitchhiker_match_score(self, request: Dict[str, Any], destination: str,
+                                         departure_time: str = None, days: str = None) -> float:
+        """Calculate match score for a hitchhiker request"""
+        score = 1.0
+        
+        # Exact destination match
+        if request.get('destination') == destination:
+            score += 2.0
+        
+        # Time matching for routines
+        if departure_time:
+            request_time = None
+            
+            # Try to extract time from request
+            if request.get('specific_datetime'):
+                parsed = self._parse_datetime_string(request['specific_datetime'])
+                request_time = parsed.get('time')
+            elif request.get('time_range'):
+                # Extract start time from range (e.g., "07:00-09:00" -> "07:00")
+                time_range = request['time_range']
+                if '-' in time_range:
+                    request_time = time_range.split('-')[0].strip()
+            
+            if request_time and self._times_match(request_time, departure_time, tolerance_hours=1):
+                score += 1.5
+        
+        # Timing match for offers (now, 30min, 1hour, etc.)
+        if request.get('ride_timing'):
+            # If driver is offering "now" and hitchhiker needs "now", it's a good match
+            # This is simplified - can be improved
+            score += 0.5
+        
+        return score
+    
+    def create_matches_for_driver(self, driver_id: ObjectId, driver_phone: str,
+                                 matching_requests: List[Dict[str, Any]],
+                                 routine_id: ObjectId = None, offer_id: ObjectId = None) -> List[Dict[str, Any]]:
+        """
+        Create match documents for a driver with matching hitchhiker requests
+        
+        Args:
+            driver_id: Driver's user ID
+            driver_phone: Driver's phone number
+            matching_requests: List of matching hitchhiker request info
+            routine_id: Optional routine ID (if matching from routine)
+            offer_id: Optional offer ID (if matching from driver offer)
+            
+        Returns:
+            List of created match documents
+        """
+        matches = []
+        
+        for request_info in matching_requests:
+            ride_request_id = request_info['ride_request_id']
+            hitchhiker_id = request_info['hitchhiker_id']
+            
+            # Check if match already exists
+            existing_match = self.db.get_collection("matches").find_one({
+                "ride_request_id": ride_request_id,
+                "driver_id": driver_id,
+                "status": {"$in": ["pending_approval", "approved"]}
+            })
+            
+            if existing_match:
+                logger.info(f"Match already exists for driver {driver_phone} and request {ride_request_id}")
+                continue
+            
+            from src.database.models import MatchModel
+            
+            match_doc = MatchModel.create(
+                ride_request_id=ride_request_id,
+                driver_id=driver_id,
+                hitchhiker_id=hitchhiker_id,
+                destination=request_info['destination'],
+                origin=request_info.get('origin', 'גברעם')
+            )
+            
+            # Add routine/offer reference if available
+            if routine_id:
+                match_doc['routine_id'] = routine_id
+            if offer_id:
+                match_doc['offer_id'] = offer_id
+            
+            result = self.db.get_collection("matches").insert_one(match_doc)
+            match_doc['_id'] = result.inserted_id
+            matches.append(match_doc)
+            
+            # Update ride request status if needed
+            ride_request = self.db.get_collection("ride_requests").find_one({"_id": ride_request_id})
+            if ride_request and ride_request.get('status') == 'pending':
+                self.db.get_collection("ride_requests").update_one(
+                    {"_id": ride_request_id},
+                    {
+                        "$set": {
+                            "status": "matched",
+                            "updated_at": datetime.now()
+                        },
+                        "$push": {
+                            "matched_drivers": {
+                                "driver_id": driver_id,
+                                "driver_phone": driver_phone,
+                                "matched_at": datetime.now(),
+                                "status": "pending"
+                            }
+                        }
+                    }
+                )
+        
+        logger.info(f"Created {len(matches)} matches for driver {driver_phone}")
         return matches
 
 

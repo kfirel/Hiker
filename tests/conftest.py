@@ -13,7 +13,6 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.user_database import UserDatabase
 from src.database.user_database_mongo import UserDatabaseMongo
 from src.database.mongodb_client import MongoDBClient
 from src.conversation_engine import ConversationEngine
@@ -21,19 +20,10 @@ from src.user_logger import UserLogger
 from tests.mock_whatsapp_client import MockWhatsAppClient
 
 @pytest.fixture(scope="function")
-def temp_db():
-    """Create a temporary database file for each test"""
-    temp_file = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
-    # Write initial empty JSON structure
-    temp_file.write('{"users": {}}')
-    temp_file.close()
-    
-    db = UserDatabase(temp_file.name)
+def temp_db(mock_mongo_client):
+    """Create a temporary MongoDB database for each test"""
+    db = UserDatabaseMongo(mongo_client=mock_mongo_client)
     yield db
-    
-    # Cleanup
-    if os.path.exists(temp_file.name):
-        os.remove(temp_file.name)
 
 @pytest.fixture(scope="function")
 def temp_logs_dir():
@@ -48,9 +38,10 @@ def temp_logs_dir():
     # Don't cleanup - keep logs for inspection
 
 @pytest.fixture(scope="function")
-def mock_whatsapp_client():
-    """Create a mock WhatsApp client"""
-    return MockWhatsAppClient()
+def mock_whatsapp_client(temp_logs_dir):
+    """Create a mock WhatsApp client with user logger"""
+    user_logger = UserLogger(logs_dir=temp_logs_dir)
+    return MockWhatsAppClient(user_logger=user_logger)
 
 @pytest.fixture(scope="function")
 def conversation_engine(temp_db, temp_logs_dir):
@@ -91,16 +82,8 @@ def mock_mongo_client():
 @pytest.fixture(scope="function")
 def mongo_db(mock_mongo_client):
     """Create a MongoDB-based user database for integration tests"""
-    temp_file = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
-    temp_file.write('{"users": {}}')
-    temp_file.close()
-    
-    db = UserDatabaseMongo(db_file=temp_file.name, mongo_client=mock_mongo_client)
+    db = UserDatabaseMongo(mongo_client=mock_mongo_client)
     yield db
-    
-    # Cleanup
-    if os.path.exists(temp_file.name):
-        os.remove(temp_file.name)
 
 @pytest.fixture(scope="function")
 def integration_conversation_engine(mongo_db, temp_logs_dir):
