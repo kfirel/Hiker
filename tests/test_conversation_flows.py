@@ -15,7 +15,7 @@ sys.path.insert(0, str(project_root))
 
 import pytest
 from tests.report_generator import HTMLReportGenerator
-from tests.conftest import conversation_engine, test_phone_number
+from tests.conftest import integration_conversation_engine, mongo_db, test_phone_number
 
 class ConversationFlowTester:
     """Test conversation flows from YAML input file"""
@@ -153,7 +153,7 @@ def test_flows():
     """Load all test flows from YAML file"""
     return load_test_flows()
 
-def test_all_flows(conversation_engine, test_phone_number, test_flows):
+def test_all_flows(integration_conversation_engine, mongo_db, test_phone_number, test_flows):
     """
     Test all conversation flows and generate HTML report
     
@@ -166,12 +166,28 @@ def test_all_flows(conversation_engine, test_phone_number, test_flows):
     test_run_dir = test_runs_base / f"run_{timestamp}"
     test_run_dir.mkdir(parents=True, exist_ok=True)
     
-    # Create symbolic link to latest run
-    latest_link = test_runs_base / "latest"
-    # Remove existing link if it exists
+    # Create/update latest directory structure
+    latest_dir = test_runs_base / "latest"
+    # If latest is a symlink, remove it and create a directory
+    if latest_dir.exists() and latest_dir.is_symlink():
+        latest_dir.unlink()
+    if not latest_dir.exists():
+        latest_dir.mkdir(exist_ok=True)
+    
+    # Create symbolic link to conversation flows directory in latest
+    latest_conversation_link = latest_dir / "conversation_flows"
+    if latest_conversation_link.exists() or latest_conversation_link.is_symlink():
+        if latest_conversation_link.is_symlink():
+            latest_conversation_link.unlink()
+        elif latest_conversation_link.is_dir():
+            import shutil
+            shutil.rmtree(latest_conversation_link)
+    latest_conversation_link.symlink_to(f"../{test_run_dir.name}")
+    
+    # Also keep the old symlink for backward compatibility
+    latest_link = test_runs_base / "latest_conversation"
     if latest_link.exists() or latest_link.is_symlink():
         latest_link.unlink()
-    # Create new symbolic link pointing to current run
     latest_link.symlink_to(test_run_dir.name)
     
     # Create logs subdirectory for this run
@@ -189,8 +205,16 @@ def test_all_flows(conversation_engine, test_phone_number, test_flows):
     flow_phone_numbers = {}
     
     # Update conversation engine to use test run logs directory
-    original_logs_dir = conversation_engine.user_logger.logs_dir
-    conversation_engine.user_logger.logs_dir = str(test_logs_dir)
+    original_logs_dir = integration_conversation_engine.user_logger.logs_dir
+    integration_conversation_engine.user_logger.logs_dir = str(test_logs_dir)
+    
+    # Clear MongoDB before starting tests
+    if hasattr(mongo_db, '_use_mongo') and mongo_db._use_mongo:
+        mongo_db.mongo.get_collection("users").delete_many({})
+        mongo_db.mongo.get_collection("routines").delete_many({})
+        mongo_db.mongo.get_collection("ride_requests").delete_many({})
+        mongo_db.mongo.get_collection("matches").delete_many({})
+        mongo_db.mongo.get_collection("notifications").delete_many({})
     
     # Run each flow
     for flow_idx, flow in enumerate(test_flows, 1):
@@ -212,8 +236,13 @@ def test_all_flows(conversation_engine, test_phone_number, test_flows):
             flow_phone = f"test_{flow_id:02d}_{random.randint(1000, 9999)}"
             flow_phone_numbers[flow_id] = flow_phone
         
+        # Clear MongoDB before each flow (except when continuing from another flow)
+        if continue_from is None and hasattr(mongo_db, '_use_mongo') and mongo_db._use_mongo:
+            # Only clear if not continuing from another flow
+            pass  # Already cleared at start, but we can clear specific user data
+        
         # Create tester for this flow
-        tester = ConversationFlowTester(conversation_engine, flow_phone)
+        tester = ConversationFlowTester(integration_conversation_engine, flow_phone)
         
         # Run the flow
         result = tester.run_flow(flow_name, flow_description, messages, continue_from)
@@ -235,10 +264,25 @@ def test_all_flows(conversation_engine, test_phone_number, test_flows):
         )
     
     # Restore original logs directory
-    conversation_engine.user_logger.logs_dir = original_logs_dir
+    integration_conversation_engine.user_logger.logs_dir = original_logs_dir
     
     # Generate and save report to test run directory
     report_path = report_generator.save_report(output_dir=str(test_run_dir))
+    
+    # Copy conversation flows report to latest directory (if report was created)
+    import shutil
+    latest_report = latest_dir / "test_report.html"
+    if report_path:
+        report_file = Path(report_path)
+        if report_file.exists():
+            shutil.copy2(report_file, latest_report)
+    
+    # Create index.html in latest directory
+    try:
+        from tests.create_latest_index import create_latest_index
+        create_latest_index(test_runs_base)
+    except Exception as e:
+        logger.warning(f"Failed to create latest index: {e}")
     
     # Create summary file
     summary_file = test_run_dir / "summary.txt"
@@ -275,10 +319,10 @@ def test_all_flows(conversation_engine, test_phone_number, test_flows):
     # Assert that all flows passed
     assert failed_count == 0, f"{failed_count} out of {total} flows failed. See report for details."
 
-@pytest.mark.parametrize("flow_index", range(20))  # Adjust range based on number of flows
-def test_individual_flow(conversation_engine, test_phone_number, flow_index):
+@pytest.mark.parametrize("flow_index", range(50))  # Test all 50 flows
+def test_individual_flow(integration_conversation_engine, mongo_db, test_phone_number, flow_index):
     """
-    Test individual flows (parametrized)
+    Test individual flows by index (parametrized)
     This allows running flows separately for better debugging
     """
     test_flows = load_test_flows()
@@ -297,8 +341,16 @@ def test_individual_flow(conversation_engine, test_phone_number, flow_index):
     import random
     flow_phone = f"test_{flow_id:02d}_{random.randint(1000, 9999)}"
     
+    # Clear MongoDB before each test
+    if hasattr(mongo_db, '_use_mongo') and mongo_db._use_mongo:
+        mongo_db.mongo.get_collection("users").delete_many({})
+        mongo_db.mongo.get_collection("routines").delete_many({})
+        mongo_db.mongo.get_collection("ride_requests").delete_many({})
+        mongo_db.mongo.get_collection("matches").delete_many({})
+        mongo_db.mongo.get_collection("notifications").delete_many({})
+    
     # Create tester
-    tester = ConversationFlowTester(conversation_engine, flow_phone)
+    tester = ConversationFlowTester(integration_conversation_engine, flow_phone)
     
     # Run the flow
     result = tester.run_flow(flow_name, flow_description, messages, continue_from)

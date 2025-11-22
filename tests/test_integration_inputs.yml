@@ -1,0 +1,340 @@
+# Integration Test Scenarios for Hiker WhatsApp Bot
+# These tests check data persistence, matching, and notifications
+# Each scenario involves multiple users interacting with the system
+
+scenarios:
+  # Scenario 1: Driver creates routine, hitchhiker requests ride, matching occurs
+  - id: 1
+    name: "Complete Matching Flow - Morning Routine"
+    description: "Driver sets morning routine to Tel Aviv, hitchhiker requests ride to same destination at same time, matching occurs"
+    users:
+      - user_id: "driver_001"
+        phone: "0501111111"
+        type: "driver"
+        setup_messages:
+          - "היי"
+          - "יוסי נהג"
+          - "חיפה"
+          - "3"  # Driver
+          - "1"  # Has routine
+          - "תל אביב"
+          - "א-ה"  # Sunday-Friday
+          - "07:00"  # Departure time
+          - "18:00"  # Return time
+          - "2"  # No more destinations
+          - "3"  # Alert preference
+        wait_after: 0  # No wait after setup
+        
+      - user_id: "hitchhiker_001"
+        phone: "0502222222"
+        type: "hitchhiker"
+        setup_messages:
+          - "שלום"
+          - "דני טרמפיסט"
+          - "תל אביב"
+          - "2"  # Hitchhiker
+          - "2"  # Not looking now
+          - "2"  # No default destination
+        wait_after: 0
+        
+      - user_id: "hitchhiker_001"
+        phone: "0502222222"
+        type: "hitchhiker"
+        action_messages:
+          - "שלום"  # Trigger menu (will show registered_user_menu)
+          - "1"  # Looking for ride (will go to ask_hitchhiker_when_need_ride)
+          - "1"  # Now (ממש עכשיו) - selects timing option 1
+          - "תל אביב"  # Destination - this completes the request
+        wait_after: 0
+        
+      - user_id: "driver_001"
+        phone: "0501111111"
+        type: "driver"
+        action_messages:
+          - "approve_MATCH_"  # Approve match (will be replaced with actual match_id)
+        wait_after: 0
+
+  # Scenario 2: Same scenario but in afternoon
+  - id: 2
+    name: "Complete Matching Flow - Afternoon Routine"
+    description: "Driver sets afternoon routine, hitchhiker requests ride at different time, still matches"
+    users:
+      - user_id: "driver_002"
+        phone: "0503333333"
+        type: "driver"
+        setup_messages:
+          - "היי"
+          - "רותי נהגת"
+          - "ירושלים"
+          - "3"  # Driver
+          - "1"  # Has routine
+          - "תל אביב"
+          - "ב,ד"  # Tuesday, Thursday
+          - "14:00"  # Afternoon departure
+          - "20:00"  # Evening return
+          - "2"  # No more destinations
+          - "3"  # Alert preference
+        wait_after: 0
+        
+      - user_id: "hitchhiker_002"
+        phone: "0504444444"
+        type: "hitchhiker"
+        setup_messages:
+          - "שלום"
+          - "מיכל טרמפיסטית"
+          - "רמת גן"
+          - "2"  # Hitchhiker
+          - "2"  # Not looking now
+          - "2"  # No default destination
+        wait_after: 0
+        
+      - user_id: "hitchhiker_002"
+        phone: "0504444444"
+        type: "hitchhiker"
+        action_messages:
+          - "שלום"
+          - "1"  # Looking for ride
+          - "1"  # Now (ממש עכשיו)
+          - "תל אביב"  # Same destination - this completes the request
+        wait_after: 0
+        
+      - user_id: "driver_002"
+        phone: "0503333333"
+        type: "driver"
+        action_messages:
+          - "approve_MATCH_"  # Approve match
+        wait_after: 0
+
+  # Scenario 3: Multiple drivers, one hitchhiker - test matching algorithm
+  - id: 3
+    name: "Multiple Drivers Matching"
+    description: "Two drivers with same destination, hitchhiker requests ride, both get matched"
+    users:
+      - user_id: "driver_003a"
+        phone: "0505555555"
+        type: "driver"
+        setup_messages:
+          - "היי"
+          - "אבי נהג"
+          - "חיפה"
+          - "3"
+          - "1"
+          - "ירושלים"
+          - "א-ה"
+          - "08:00"
+          - "17:00"
+          - "2"
+          - "3"
+        wait_after: 0
+        
+      - user_id: "driver_003b"
+        phone: "0506666666"
+        type: "driver"
+        setup_messages:
+          - "שלום"
+          - "דוד נהג"
+          - "תל אביב"
+          - "3"
+          - "1"
+          - "ירושלים"  # Same destination
+          - "א-ה"
+          - "08:30"  # Slightly different time
+          - "17:30"
+          - "2"
+          - "3"
+        wait_after: 0
+        
+      - user_id: "hitchhiker_003"
+        phone: "0507777777"
+        type: "hitchhiker"
+        setup_messages:
+          - "היי"
+          - "שרה טרמפיסטית"
+          - "רעננה"
+          - "2"
+          - "2"
+          - "2"
+        wait_after: 0
+        
+      - user_id: "hitchhiker_003"
+        phone: "0507777777"
+        type: "hitchhiker"
+        action_messages:
+          - "שלום"
+          - "1"  # Looking for ride
+          - "1"  # Now (ממש עכשיו)
+          - "ירושלים"  # Same destination - this completes the request
+        wait_after: 0
+        
+      - user_id: "driver_003a"
+        phone: "0505555555"
+        type: "driver"
+        action_messages:
+          - "approve_MATCH_"  # First driver approves
+        wait_after: 0
+        
+      - user_id: "driver_003b"
+        phone: "0506666666"
+        type: "driver"
+        action_messages:
+          - "reject_MATCH_"  # Second driver rejects
+        wait_after: 0
+
+  # Scenario 4: Driver rejection flow
+  - id: 4
+    name: "Driver Rejection Flow"
+    description: "Driver rejects match, hitchhiker continues searching"
+    users:
+      - user_id: "driver_004"
+        phone: "0508888888"
+        type: "driver"
+        setup_messages:
+          - "היי"
+          - "עמית נהג"
+          - "באר שבע"
+          - "3"
+          - "1"
+          - "תל אביב"
+          - "א,ג,ה"
+          - "09:00"
+          - "19:00"
+          - "2"
+          - "3"
+        wait_after: 0
+        
+      - user_id: "hitchhiker_004"
+        phone: "0509999999"
+        type: "hitchhiker"
+        setup_messages:
+          - "שלום"
+          - "יונתן טרמפיסט"
+          - "אשדוד"
+          - "2"
+          - "2"
+          - "2"
+        wait_after: 0
+        
+      - user_id: "hitchhiker_004"
+        phone: "0509999999"
+        type: "hitchhiker"
+        action_messages:
+          - "שלום"
+          - "1"  # Looking for ride
+          - "1"  # Now (ממש עכשיו)
+          - "תל אביב"  # Same destination - this completes the request
+        wait_after: 0
+        
+      - user_id: "driver_004"
+        phone: "0508888888"
+        type: "driver"
+        action_messages:
+          - "reject_MATCH_"  # Reject match
+        wait_after: 0
+
+  # Scenario 5: Specific datetime request
+  - id: 5
+    name: "Specific DateTime Request"
+    description: "Hitchhiker requests ride for specific future date/time"
+    users:
+      - user_id: "driver_005"
+        phone: "0511111111"
+        type: "driver"
+        setup_messages:
+          - "היי"
+          - "נועה נהגת"
+          - "חיפה"
+          - "3"
+          - "1"
+          - "תל אביב"
+          - "א-ה"
+          - "07:00"
+          - "18:00"
+          - "2"
+          - "3"
+        wait_after: 0
+        
+      - user_id: "hitchhiker_005"
+        phone: "0512222222"
+        type: "hitchhiker"
+        setup_messages:
+          - "שלום"
+          - "אור טרמפיסט"
+          - "רמת גן"
+          - "2"
+          - "2"
+          - "2"
+        wait_after: 0
+        
+      - user_id: "hitchhiker_005"
+        phone: "0512222222"
+        type: "hitchhiker"
+        action_messages:
+          - "שלום"
+          - "1"  # Looking for ride
+          - "1"  # Now (ממש עכשיו)
+          - "תל אביב"  # Same destination - this completes the request
+        wait_after: 0
+        
+      - user_id: "driver_005"
+        phone: "0511111111"
+        type: "driver"
+        action_messages:
+          - "approve_MATCH_"
+        wait_after: 0
+
+  # Scenario 6: Driver offer (not routine)
+  - id: 6
+    name: "Driver Offer Flow"
+    description: "Driver offers one-time ride, hitchhiker requests, matching occurs"
+    users:
+      - user_id: "driver_006"
+        phone: "0513333333"
+        type: "driver"
+        setup_messages:
+          - "היי"
+          - "אלון נהג"
+          - "תל אביב"
+          - "3"
+          - "2"  # No routine
+          - "4"  # No alerts
+        wait_after: 0
+        
+      - user_id: "driver_006"
+        phone: "0513333333"
+        type: "driver"
+        action_messages:
+          - "שלום"
+          - "2"  # Offering ride
+          - "1"  # Leaving now
+          - "ירושלים"
+        wait_after: 0
+        
+      - user_id: "hitchhiker_006"
+        phone: "0514444444"
+        type: "hitchhiker"
+        setup_messages:
+          - "שלום"
+          - "תמר טרמפיסטית"
+          - "רעננה"
+          - "2"
+          - "2"
+          - "2"
+        wait_after: 0
+        
+      - user_id: "hitchhiker_006"
+        phone: "0514444444"
+        type: "hitchhiker"
+        action_messages:
+          - "שלום"
+          - "1"  # Looking for ride
+          - "1"  # Now (ממש עכשיו)
+          - "ירושלים"  # Same destination - this completes the request
+        wait_after: 0
+        
+      - user_id: "driver_006"
+        phone: "0513333333"
+        type: "driver"
+        action_messages:
+          - "approve_MATCH_"
+        wait_after: 0
+

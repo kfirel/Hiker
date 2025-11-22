@@ -190,3 +190,4 @@ def enrich_with_coordinates(settlements: list) -> list:
 - [GeoNames API](http://www.geonames.org/export/web-services.html)
 - [Google Maps Geocoding API](https://developers.google.com/maps/documentation/geocoding)
 
+

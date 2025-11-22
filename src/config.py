@@ -16,6 +16,10 @@ class Config:
     FLASK_PORT = int(os.getenv('FLASK_PORT', 5000))
     FLASK_DEBUG = os.getenv('FLASK_DEBUG', 'True').lower() == 'true'  # Auto-reload on code changes
     
+    # MongoDB Configuration
+    MONGODB_URI = os.getenv('MONGODB_URI', 'mongodb://localhost:27017/')
+    MONGODB_DB_NAME = os.getenv('MONGODB_DB_NAME', 'hiker_db')
+    
     # WhatsApp API URL
     WHATSAPP_API_URL = f"https://graph.facebook.com/v18.0/{WHATSAPP_PHONE_NUMBER_ID}/messages"
     

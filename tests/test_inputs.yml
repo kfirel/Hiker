@@ -393,6 +393,486 @@ flows:
       - "2"  # Hitchhiker
       - "1"  # Looking now
       - "נתיב"  # Invalid settlement - should show error and suggestions
-      - "נתיבות"  # Select valid suggestion or enter valid settlement
+      - "1"  # Select first suggestion (נתיבות)
       - "1"  # Soon
       - "08:00-10:00"
+
+  # Flow 21: Registered driver offering ride - complete flow
+  - id: 21
+    name: "Registered Driver - Offer Ride Complete Flow"
+    description: "Complete flow of registered driver offering a ride through menu"
+    continue_from: 2  # Continue from flow 2 (registered driver)
+    messages:
+      - "שלום"  # User greets bot
+      - "2"  # Offering ride
+      - "1"  # Leaving now
+      - "ירושלים"  # Destination
+      - "שלום"  # User greets again after confirmation
+
+  # Flow 22: Registered hitchhiker requesting ride - complete flow
+  - id: 22
+    name: "Registered Hitchhiker - Request Ride Complete Flow"
+    description: "Complete flow of registered hitchhiker requesting a ride through menu"
+    continue_from: 1  # Continue from flow 1 (registered hitchhiker)
+    messages:
+      - "היי"  # User greets bot
+      - "1"  # Looking for ride
+      - "1"  # Now
+      - "חיפה"  # Destination
+      - "1"  # Soon
+      - "14:00-16:00"  # Time range
+
+  # Flow 23: Both user type - complete journey as hitchhiker then driver
+  - id: 23
+    name: "Both User - Complete Journey Hitchhiker Then Driver"
+    description: "User who is both types, first requests ride then offers ride"
+    continue_from: 3  # Continue from flow 3 (both user)
+    messages:
+      - "שלום"  # User greets bot
+      - "1"  # Looking for ride
+      - "2"  # In 30 minutes
+      - "תל אביב"  # Destination
+      - "שלום"  # After ride request confirmed
+      - "2"  # Offering ride
+      - "3"  # In 1 hour
+      - "ירושלים"  # Destination
+
+  # Flow 24: Driver updating routine - complete flow
+  - id: 24
+    name: "Registered Driver - Update Routine Flow"
+    description: "Registered driver updating their driving routine"
+    continue_from: 2  # Continue from flow 2 (registered driver with routine)
+    messages:
+      - "שלום"  # User greets bot
+      - "1"  # Update routine
+      - "1"  # Yes, has routine
+      - "חיפה"  # New destination
+      - "ב,ד"  # New days
+      - "08:00"  # New departure time
+      - "17:00"  # New return time
+      - "2"  # No more destinations
+      - "2"  # Alert preference: my destinations only
+
+  # Flow 25: Time input variations - single digit and formats
+  - id: 25
+    name: "Time Input Variations - Single Digit and Formats"
+    description: "Tests various time input formats including single digits"
+    messages:
+      - "היי"
+      - "יוסי כהן"
+      - "תל אביב"
+      - "3"  # Driver
+      - "1"  # Has routine
+      - "ירושלים"
+      - "א-ה"
+      - "6"  # Single digit hour (should normalize to 06:00)
+      - "18"  # Two digit hour without minutes (should normalize to 18:00)
+      - "2"  # No more destinations
+      - "3"  # Alert preference
+
+  # Flow 26: Partial settlement match - "תל אביב" should match "תל אביב -יפו"
+  - id: 26
+    name: "Settlement Partial Match - Tel Aviv"
+    description: "Tests that 'תל אביב' matches 'תל אביב -יפו' correctly"
+    messages:
+      - "שלום"
+      - "דני כהן"
+      - "תל אביב"  # Should match "תל אביב -יפו"
+      - "2"  # Hitchhiker
+      - "1"  # Looking now
+      - "ירושלים"
+      - "1"  # Soon
+      - "7-9"  # Simple time format
+
+  # Flow 27: User returning after idle - menu should appear
+  - id: 27
+    name: "User Returning After Idle - Menu Display"
+    description: "Tests that registered user gets menu when returning after idle state"
+    continue_from: 1  # Continue from flow 1
+    messages:
+      - "היי"  # User returns after being idle
+      - "1"  # Should show menu and user selects option 1
+      - "1"  # Looking for ride
+      - "תל אביב"
+      - "1"  # Soon
+      - "08:00-10:00"
+
+  # Flow 28: Error recovery - multiple invalid inputs then valid
+  - id: 28
+    name: "Error Recovery - Multiple Invalid Then Valid"
+    description: "Tests user recovery after multiple validation errors"
+    messages:
+      - "היי"
+      - "א"  # Too short name
+      - "יוסי כהן"  # Valid name
+      - "invalid123"  # Invalid settlement
+      - "תל אביב"  # Valid settlement
+      - "99"  # Invalid choice
+      - "2"  # Valid choice - hitchhiker
+      - "invalid"  # Invalid choice
+      - "1"  # Valid - looking now
+      - "invalid_dest"  # Invalid destination
+      - "ירושלים"  # Valid destination
+      - "invalid_time"  # Invalid time format
+      - "1"  # Soon
+      - "25:99-30:00"  # Invalid time range
+      - "08:00-10:00"  # Valid time range
+
+  # Flow 29: Both user - hitchhiker flow then driver routine setup
+  - id: 29
+    name: "Both User - Hitchhiker Then Driver Routine"
+    description: "Both user completes hitchhiker registration then sets up driver routine"
+    messages:
+      - "שלום"
+      - "שרה לוי"
+      - "רעננה"
+      - "1"  # Both
+      - "1"  # Looking now
+      - "תל אביב"
+      - "1"  # Soon
+      - "08:00-10:00"
+      # Now driver questions should appear
+      - "1"  # Has routine
+      - "ירושלים"
+      - "א,ג,ה"
+      - "07:00"
+      - "17:00"
+      - "2"  # No more destinations
+      - "2"  # Alert preference: my destinations only
+
+  # Flow 30: Quick ride request - minimal steps
+  - id: 30
+    name: "Quick Ride Request - Minimal Steps"
+    description: "Fastest path to request a ride for registered user"
+    continue_from: 1  # Continue from flow 1 (registered hitchhiker)
+    messages:
+      - "1"  # Looking for ride
+      - "1"  # Now
+      - "תל אביב"  # Destination
+      - "1"  # Soon
+      - "8-10"  # Simple time format
+
+  # Flow 31: Driver with no routine - quick offer ride
+  - id: 31
+    name: "Driver No Routine - Quick Offer Ride"
+    description: "Driver without routine quickly offering a ride"
+    messages:
+      - "היי"
+      - "יוסי נהג"
+      - "חיפה"
+      - "3"  # Driver
+      - "2"  # No routine
+      - "4"  # No alerts
+      # After registration
+      - "שלום"
+      - "2"  # Offering ride
+      - "1"  # Leaving now
+      - "תל אביב"
+
+  # Flow 32: Help command during registration
+  - id: 32
+    name: "Help Command During Registration"
+    description: "User requests help during registration flow"
+    messages:
+      - "היי"
+      - "דני כהן"
+      - "תל אביב"
+      - "עזרה"  # Help command
+      - "2"  # Hitchhiker
+      - "1"  # Looking now
+      - "ירושלים"
+      - "1"  # Soon
+      - "08:00-10:00"
+
+  # Flow 33: Menu command during registration
+  - id: 33
+    name: "Menu Command During Registration"
+    description: "User requests menu during registration (should continue registration)"
+    messages:
+      - "שלום"
+      - "יוסי כהן"
+      - "תל אביב"
+      - "תפריט"  # Menu command (should continue registration)
+      - "3"  # Driver
+      - "1"  # Has routine
+      - "ירושלים"
+      - "א-ה"
+      - "07:00"
+      - "18:00"
+      - "2"  # No more destinations
+      - "3"  # Alert preference
+
+  # Flow 34: Multiple routine destinations - edge case
+  - id: 34
+    name: "Multiple Routines - Maximum Destinations"
+    description: "Driver setting up maximum number of routine destinations"
+    messages:
+      - "שלום"
+      - "יוסי נהג"
+      - "חיפה"
+      - "3"  # Driver
+      - "1"  # Has routine
+      - "תל אביב"
+      - "א-ה"
+      - "07:00"
+      - "18:00"
+      - "1"  # Yes, another destination
+      - "ירושלים"
+      - "ב,ד"
+      - "09:00"
+      - "19:00"
+      - "1"  # Yes, another destination
+      - "באר שבע"
+      - "א"
+      - "06:00"
+      - "16:00"
+      - "2"  # No more destinations
+      - "3"  # Alert preference
+
+  # Flow 35: Time range with single digits - "7-9" format
+  - id: 35
+    name: "Time Range - Single Digit Hours Format"
+    description: "Tests time range input with single digit hours like '7-9'"
+    messages:
+      - "היי"
+      - "דני כהן"
+      - "תל אביב"
+      - "2"  # Hitchhiker
+      - "1"  # Looking now
+      - "ירושלים"
+      - "1"  # Soon
+      - "7-9"  # Single digit hours (should normalize to 07:00-09:00)
+
+  # Flow 36: Settlement suggestions - user selects from list
+  - id: 36
+    name: "Settlement Suggestions - Select From List"
+    description: "User receives settlement suggestions and selects one"
+    messages:
+      - "שלום"
+      - "יוסי כהן"
+      - "גברעם"  # Invalid - should suggest "גבעתיים"
+      - "1"  # Select first suggestion
+      - "2"  # Hitchhiker
+      - "2"  # Not looking now
+      - "2"  # No default destination
+
+  # Flow 37: User changes mind - restarts mid-flow
+  - id: 37
+    name: "User Changes Mind - Restart Mid Flow"
+    description: "User starts registration, changes mind, restarts, completes"
+    messages:
+      - "היי"
+      - "דני"
+      - "תל אביב"
+      - "2"  # Hitchhiker
+      - "חדש"  # Restart
+      - "שרה לוי"
+      - "ירושלים"
+      - "1"  # Both
+      - "2"  # Not looking now
+      - "1"  # Yes, default destination
+      - "תל אביב"
+      - "2"  # No routine
+      - "1"  # All alerts
+
+  # Flow 38: Both user - complete hitchhiker then driver flow
+  - id: 38
+    name: "Both User - Complete Both Flows"
+    description: "Both user completes full hitchhiker and driver registration"
+    messages:
+      - "שלום"
+      - "יוסי כהן"
+      - "רעננה"
+      - "1"  # Both
+      - "1"  # Looking now
+      - "תל אביב"
+      - "1"  # Soon
+      - "08:00-10:00"
+      # Driver questions
+      - "1"  # Has routine
+      - "ירושלים"
+      - "א-ה"
+      - "07:00"
+      - "18:00"
+      - "2"  # No more destinations
+      - "3"  # Alert preference: destinations + times
+
+  # Flow 39: Test "go back" command
+  - id: 39
+    name: "Go Back Command Test"
+    description: "Tests the 'go back' command functionality"
+    messages:
+      - "היי"
+      - "דני כהן"
+      - "תל אביב"
+      - "2"  # Hitchhiker
+      - "1"  # Looking now
+      - "ירושלים"
+      - "חזור"  # Go back command
+      - "תל אביב"  # Should be back at ask_destination
+      - "1"  # Soon
+      - "08:00-10:00"
+
+  # Flow 40: Test restart confirmation
+  - id: 40
+    name: "Restart Confirmation Test"
+    description: "Tests restart confirmation for registered users"
+    continue_from: 1  # Continue from flow 1 (registered user)
+    messages:
+      - "שלום"  # User greets bot
+      - "5"  # Select restart option (or "חדש" command)
+      - "2"  # Cancel restart (no)
+      - "1"  # Looking for ride
+      - "1"  # Now
+      - "תל אביב"
+      - "1"  # Soon
+      - "08:00-10:00"
+
+  # Flow 41: Test "show my info" feature
+  - id: 41
+    name: "Show My Info Test"
+    description: "Tests the 'show my info' feature in menu"
+    continue_from: 2  # Continue from flow 2 (registered driver)
+    messages:
+      - "שלום"  # User greets bot
+      - "3"  # Show my info
+      - "2"  # Back to menu
+      - "2"  # Offering ride
+      - "1"  # Leaving now
+      - "תל אביב"
+
+  # Flow 42: Test help command
+  - id: 42
+    name: "Help Command Test"
+    description: "Tests the help command functionality"
+    continue_from: 1  # Continue from flow 1
+    messages:
+      - "עזרה"  # Help command
+      - "1"  # Looking for ride
+      - "1"  # Now
+      - "תל אביב"
+      - "1"  # Soon
+      - "08:00-10:00"
+
+  # Flow 43: Test enhanced error messages
+  - id: 43
+    name: "Enhanced Error Messages Test"
+    description: "Tests enhanced error messages with examples"
+    messages:
+      - "היי"
+      - "דני כהן"
+      - "תל אביב"
+      - "2"  # Hitchhiker
+      - "1"  # Looking now
+      - "ירושלים"
+      - "1"  # Soon
+      - "invalid_time_range"  # Invalid time - should show enhanced error
+      - "7-9"  # Valid time range
+      - "תודה"  # User thanks bot
+
+  # Flow 44: Test help from menu
+  - id: 44
+    name: "Help From Menu Test"
+    description: "Tests help option from registered user menu"
+    continue_from: 3  # Continue from flow 3 (both user)
+    messages:
+      - "שלום"  # User greets bot
+      - "5"  # Help option from menu
+      - "1"  # Looking for ride
+      - "1"  # Now
+      - "תל אביב"
+      - "1"  # Soon
+      - "08:00-10:00"
+
+  # Flow 45: Test restart confirmation - confirm restart
+  - id: 45
+    name: "Restart Confirmation - Confirm Restart"
+    description: "Tests restart confirmation when user confirms restart"
+    continue_from: 2  # Continue from flow 2 (registered driver)
+    messages:
+      - "חדש"  # Restart command
+      - "1"  # Confirm restart (yes)
+      - "יוסי כהן"  # Start new registration
+      - "חיפה"
+      - "3"  # Driver
+      - "2"  # No routine
+      - "4"  # No alerts
+
+  # Flow 46: Test multiple go back commands
+  - id: 46
+    name: "Multiple Go Back Commands"
+    description: "Tests multiple go back commands in sequence"
+    messages:
+      - "היי"
+      - "דני כהן"
+      - "תל אביב"
+      - "2"  # Hitchhiker
+      - "1"  # Looking now
+      - "ירושלים"
+      - "1"  # Soon
+      - "חזור"  # Go back
+      - "2"  # Specific datetime
+      - "חזור"  # Go back again
+      - "1"  # Soon
+      - "08:00-10:00"
+
+  # Flow 47: Datetime validation - Hebrew formats
+  - id: 47
+    name: "Datetime Validation - Hebrew Formats"
+    description: "Tests datetime validation with Hebrew date formats like 'מחר ב15', 'מחר 15:00', etc."
+    messages:
+      - "היי"
+      - "יוסי כהן"
+      - "תל אביב"
+      - "2"  # Hitchhiker
+      - "1"  # Looking now
+      - "חיפה"
+      - "2"  # Specific datetime
+      - "מחר ב15"  # Hebrew format: tomorrow at 15 (should normalize to "מחר 15:00")
+      # After successful validation, should proceed to complete_ride_request
+
+  # Flow 48: Datetime validation - Multiple Hebrew formats
+  - id: 48
+    name: "Datetime Validation - Multiple Hebrew Formats"
+    description: "Tests various Hebrew datetime formats including 'מחר ב-15', 'מחר 15:00', 'היום 14:30'"
+    messages:
+      - "שלום"
+      - "דני כהן"
+      - "ירושלים"
+      - "2"  # Hitchhiker
+      - "1"  # Looking now
+      - "תל אביב"
+      - "2"  # Specific datetime
+      - "מחר ב-15"  # Hebrew format with dash (should normalize to "מחר 15:00")
+      # After successful validation, should proceed to complete_ride_request
+
+  # Flow 49: Datetime validation - Exact date format
+  - id: 49
+    name: "Datetime Validation - Exact Date Format"
+    description: "Tests exact date format '15/11/2025 14:30'"
+    messages:
+      - "היי"
+      - "שרה לוי"
+      - "חיפה"
+      - "2"  # Hitchhiker
+      - "1"  # Looking now
+      - "תל אביב"
+      - "2"  # Specific datetime
+      - "15/11/2025 14:30"  # Exact date format (should be validated and saved as-is)
+      # After successful validation, should proceed to complete_ride_request
+
+  # Flow 50: Test show info then edit
+  - id: 50
+    name: "Show Info Then Edit"
+    description: "Tests showing info and then editing"
+    continue_from: 2  # Continue from flow 2 (registered driver)
+    messages:
+      - "שלום"
+      - "3"  # Show my info
+      - "1"  # Edit details
+      - "1"  # Edit name
+      - "יוסי נהג חדש"
+      - "2"  # Back to menu
+      - "2"  # Offering ride
+      - "1"  # Leaving now
+      - "תל אביב"

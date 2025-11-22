@@ -79,25 +79,72 @@ class UserDatabase:
             return user['state']['current_state']
         return 'initial'
     
-    def set_user_state(self, phone_number: str, state: str, context: Dict[str, Any] = None):
-        """Set user's conversation state"""
+    def set_user_state(self, phone_number: str, state: str, context: Dict[str, Any] = None, add_to_history: bool = True):
+        """Set user's conversation state
+        
+        Args:
+            phone_number: User's phone number
+            state: New state ID
+            context: Optional context data
+            add_to_history: Whether to add this state to history (default: True)
+        """
         if not self.user_exists(phone_number):
             self.create_user(phone_number)
         
         user = self.data['users'][phone_number]
+        current_state = user['state']['current_state']
+        
+        # Only add to history if state actually changed and add_to_history is True
+        if add_to_history and current_state != state:
+            # Add current state to history before changing
+            user['state']['history'].append({
+                'state': current_state,
+                'timestamp': datetime.now().isoformat(),
+                'context': user['state']['context'].copy() if user['state']['context'] else {}
+            })
+            
+            # Limit history to last 10 states to prevent memory issues
+            if len(user['state']['history']) > 10:
+                user['state']['history'] = user['state']['history'][-10:]
+        
         user['state']['current_state'] = state
         
         if context:
             user['state']['context'].update(context)
         
-        # Add to history
-        user['state']['history'].append({
-            'state': state,
-            'timestamp': datetime.now().isoformat(),
-            'context': context or {}
-        })
-        
         self._save_database()
+    
+    def get_state_history(self, phone_number: str) -> list:
+        """Get user's state history
+        
+        Args:
+            phone_number: User's phone number
+            
+        Returns:
+            List of state history entries
+        """
+        user = self.get_user(phone_number)
+        if user:
+            return user.get('state', {}).get('history', [])
+        return []
+    
+    def pop_state_history(self, phone_number: str) -> Optional[Dict[str, Any]]:
+        """Pop the last state from history (for go_back functionality)
+        
+        Args:
+            phone_number: User's phone number
+            
+        Returns:
+            Last state entry or None if history is empty
+        """
+        user = self.get_user(phone_number)
+        if user and user.get('state', {}).get('history'):
+            history = user['state']['history']
+            if history:
+                popped = history.pop()
+                self._save_database()
+                return popped
+        return None
     
     def get_user_context(self, phone_number: str) -> Dict[str, Any]:
         """Get user's conversation context"""
