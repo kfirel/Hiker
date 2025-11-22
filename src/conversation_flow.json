@@ -129,7 +129,7 @@
         "2": {
           "label": "⏭️ לא צריך",
           "value": "no",
-          "message": "בסדר! 👍\n\nאם תשנה את דעתך, תמיד תוכל להגדיר יעד מועדף מאוחר יותר דרך התפריט. 😊",
+          "message": "בסדר! 👍\n\nאם תשנה את דעתך, תמיד תוכל להגדיר יעד מועדף מאוחר יותר דרך התפריט (אפשרות \"הצג את המידע שלי\" → \"עדכן יעד מועדף\"). 😊",
           "next_state": "check_if_also_driver"
         }
       }
@@ -294,7 +294,7 @@
     
     "registration_complete": {
       "id": "registration_complete",
-      "message": "יאללה! 🎉🎊 סיימנו!\n\nההרשמה הושלמה בהצלחה! ✅\n\n📋 המידע שלך:\n{user_summary}\n\nמעכשיו אני כאן בשבילך 24/7! 🚗💪\nכל פעם שתצטרך עזרה - פשוט תכתוב לי! 😊\n\nיש טרמפ! 🚙💨",
+      "message": "יאללה! 🎉🎊 סיימנו!\n\nההרשמה הושלמה בהצלחה! ✅\n\n📋 המידע שלך:\n{user_summary}\n\nמעכשיו אני כאן בשבילך 24/7! 🚗💪\nכל פעם שתצטרך עזרה - פשוט תכתוב לי! 😊\n\nיש טרמפ! 🚙💨\n\nכשתצטרך טרמפ או תרצה להציע טרמפ - פשוט כתוב לי \"שלום\" ואני אעזור לך! 😊",
       "action": "complete_registration",
       "next_state": "idle"
     },
@@ -451,7 +451,7 @@
     
     "confirm_driver_ride_offer": {
       "id": "confirm_driver_ride_offer",
-      "message": "תודה רבה! 🙏✨\n\nהנסיעה שלך נרשמה במערכת!\n\n📋 המידע שלך:\n{user_summary}\n\nטרמפיסטים מתאימים יקבלו התראה 📲\n\nנסיעה בטוחה! 🚗💨",
+      "message": "תודה רבה! 🙏✨\n\nהנסיעה שלך נרשמה במערכת!\n\n📋 המידע שלך:\n{user_summary}\n\nטרמפיסטים מתאימים יקבלו התראה תוך כמה דקות 📲\n\nנסיעה בטוחה! 🚗💨",
       "action": "save_driver_ride_offer",
       "next_state": "idle"
     },
@@ -495,7 +495,7 @@
     
     "confirm_hitchhiker_ride_request": {
       "id": "confirm_hitchhiker_ride_request",
-      "message": "יאללה! 🎉\n\nהבקשה שלך נרשמה במערכת!\n\n📋 המידע שלך:\n{user_summary}\n\nאני מחפש לך נהג מתאים... 🔍🚗\n\nברגע שאמצא - תקבל התראה! 📲",
+      "message": "יאללה! 🎉\n\nהבקשה שלך נרשמה במערכת!\n\n📋 המידע שלך:\n{user_summary}\n\nאני מחפש לך נהג מתאים עכשיו... 🔍🚗\nאם אמצא נהג מתאים - תקבל התראה תוך כמה דקות! 📲",
       "action": "save_hitchhiker_ride_request",
       "next_state": "idle"
     },

@@ -178,9 +178,19 @@ class NotificationService:
         
         # Build message
         if num_matches == 1:
-            message = "🎉 מצאתי לך נהג מתאים! הוא יקבל בקרוב התראה ואם הוא מאשר - תקבל את פרטי הקשר שלו. 📲"
+            message = """🎉 מצאתי לך נהג מתאים!
+
+הנהג יקבל בקרוב התראה על הבקשה שלך.
+אם הוא מאשר - תקבל את פרטי הקשר שלו תוך כמה דקות. 📲
+
+(אם הנהג לא יאשר או לא יגיב תוך זמן סביר, אמשיך לחפש לך נהגים אחרים) 🔍"""
         else:
-            message = f"🎉 מצאתי לך {num_matches} נהגים מתאימים! הם יקבלו בקרוב התראה ואם אחד מהם מאשר - תקבל את פרטי הקשר שלו. 📲"
+            message = f"""🎉 מצאתי לך {num_matches} נהגים מתאימים!
+
+הנהגים יקבלו בקרוב התראה על הבקשה שלך.
+הנהג הראשון שיאשר - תקבל את פרטי הקשר שלו תוך כמה דקות. 📲
+
+(אם אף אחד לא יאשר, אמשיך לחפש לך נהגים אחרים) 🔍"""
         
         # Send message
         self.whatsapp_client.send_message(
@@ -197,14 +207,22 @@ class NotificationService:
         hitchhiker_name = hitchhiker.get('full_name') or hitchhiker.get('whatsapp_name') or 'טרמפיסט'
         origin = ride_request.get('origin', 'גברעם')
         destination = ride_request.get('destination', 'יעד')
-        time_info = ride_request.get('specific_datetime') or ride_request.get('time_range') or 'גמיש'
+        
+        # Format time range for display
+        start_time = ride_request.get('start_time_range')
+        end_time = ride_request.get('end_time_range')
+        if start_time and end_time:
+            time_info = f"{start_time.strftime('%H:%M')}-{end_time.strftime('%H:%M')}"
+        else:
+            time_info = 'גמיש'
         
         return f"""🚗 בקשה חדשה לטרמפ!
 
 👤 טרמפיסט: {hitchhiker_name}
 📍 מ: {origin}
 🎯 ל: {destination}
-⏰ זמן: {time_info}
+⏰ טווח זמן נסיעה: {time_info}
+(הטרמפיסט צריך להגיע ליעד בטווח השעות הזה)
 
 האם אתה יכול לעזור?"""
     

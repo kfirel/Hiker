@@ -72,9 +72,10 @@ class MessageFormatter:
         Returns:
             Formatted user summary string
         """
+        from datetime import datetime
+        
         profile = self.user_db.get_user(phone_number).get('profile', {})
         user = self.user_db.get_user(phone_number)
-        routines = user.get('routines', []) if user else []
         
         summary_parts = []
         
@@ -101,21 +102,150 @@ class MessageFormatter:
         if default_dest:
             summary_parts.append(f"⭐ יעד מועדף: {default_dest}")
         
-        # Routines
-        routine_dest = profile.get('routine_destination')
-        routine_days = profile.get('routine_days')
-        routine_departure = profile.get('routine_departure_time')
-        routine_return = profile.get('routine_return_time')
+        # Get routines from database
+        routines = []
+        if hasattr(self.user_db, 'mongo') and self.user_db.mongo and self.user_db.mongo.is_connected():
+            try:
+                user_doc = self.user_db.mongo.get_collection("users").find_one({"phone_number": phone_number})
+                if user_doc:
+                    user_id = user_doc.get('_id')
+                    routines_cursor = self.user_db.mongo.get_collection("routines").find({
+                        "user_id": user_id,
+                        "is_active": True
+                    })
+                    routines = list(routines_cursor)
+            except Exception as e:
+                logger.warning(f"Failed to fetch routines from database: {e}")
         
-        if routine_dest:
-            routine_info = f"🔄 שגרת נסיעות: {routine_dest}"
-            if routine_days:
-                routine_info += f" ({routine_days})"
-            if routine_departure:
-                routine_info += f" - יוצא ב-{routine_departure}"
-            if routine_return:
-                routine_info += f", חוזר ב-{routine_return}"
-            summary_parts.append(routine_info)
+        # Display routines
+        if routines:
+            summary_parts.append("")  # Empty line before routines
+            summary_parts.append("🔄 שגרות נסיעה:")
+            for idx, routine in enumerate(routines, 1):
+                dest = routine.get('destination', '')
+                days = routine.get('days', '')
+                dep_start = routine.get('departure_time_start')
+                dep_end = routine.get('departure_time_end')
+                ret_start = routine.get('return_time_start')
+                ret_end = routine.get('return_time_end')
+                
+                routine_str = f"   {idx}. {dest}"
+                if days:
+                    routine_str += f" ({days})"
+                
+                if dep_start and dep_end:
+                    if isinstance(dep_start, datetime):
+                        dep_start_str = dep_start.strftime('%H:%M')
+                    else:
+                        dep_start_str = str(dep_start)[:5] if len(str(dep_start)) >= 5 else str(dep_start)
+                    if isinstance(dep_end, datetime):
+                        dep_end_str = dep_end.strftime('%H:%M')
+                    else:
+                        dep_end_str = str(dep_end)[:5] if len(str(dep_end)) >= 5 else str(dep_end)
+                    routine_str += f" - יוצא {dep_start_str}-{dep_end_str}"
+                
+                if ret_start and ret_end:
+                    if isinstance(ret_start, datetime):
+                        ret_start_str = ret_start.strftime('%H:%M')
+                    else:
+                        ret_start_str = str(ret_start)[:5] if len(str(ret_start)) >= 5 else str(ret_start)
+                    if isinstance(ret_end, datetime):
+                        ret_end_str = ret_end.strftime('%H:%M')
+                    else:
+                        ret_end_str = str(ret_end)[:5] if len(str(ret_end)) >= 5 else str(ret_end)
+                    routine_str += f", חוזר {ret_start_str}-{ret_end_str}"
+                
+                summary_parts.append(routine_str)
+        else:
+            # Fallback to profile routines (for backward compatibility)
+            routine_dest = profile.get('routine_destination')
+            routine_days = profile.get('routine_days')
+            routine_departure = profile.get('routine_departure_time')
+            routine_return = profile.get('routine_return_time')
+            
+            if routine_dest:
+                routine_info = f"🔄 שגרת נסיעות: {routine_dest}"
+                if routine_days:
+                    routine_info += f" ({routine_days})"
+                if routine_departure:
+                    routine_info += f" - יוצא ב-{routine_departure}"
+                if routine_return:
+                    routine_info += f", חוזר ב-{routine_return}"
+                summary_parts.append(routine_info)
+        
+        # Get active ride requests (for hitchhikers)
+        if user_type in ['hitchhiker', 'both']:
+            active_requests = []
+            if hasattr(self.user_db, 'mongo') and self.user_db.mongo and self.user_db.mongo.is_connected():
+                try:
+                    user_doc = self.user_db.mongo.get_collection("users").find_one({"phone_number": phone_number})
+                    if user_doc:
+                        user_id = user_doc.get('_id')
+                        # Ride requests are stored as ride_requests with type="hitchhiker_request"
+                        requests_cursor = self.user_db.mongo.get_collection("ride_requests").find({
+                            "requester_id": user_id,
+                            "type": "hitchhiker_request",
+                            "status": {"$in": ["pending", "active"]}
+                        }).sort("created_at", -1).limit(5)  # Show up to 5 recent requests
+                        active_requests = list(requests_cursor)
+                except Exception as e:
+                    logger.warning(f"Failed to fetch ride requests from database: {e}")
+            
+            if active_requests:
+                summary_parts.append("")  # Empty line before requests
+                summary_parts.append("🚶 בקשות טרמפ פעילות:")
+                for idx, request in enumerate(active_requests, 1):
+                    dest = request.get('destination', '')
+                    start_time = request.get('start_time_range')
+                    end_time = request.get('end_time_range')
+                    
+                    request_str = f"   {idx}. ל-{dest}"
+                    if start_time and end_time:
+                        if isinstance(start_time, datetime):
+                            start_str = start_time.strftime('%d/%m %H:%M')
+                        else:
+                            start_str = str(start_time)[:16]
+                        if isinstance(end_time, datetime):
+                            end_str = end_time.strftime('%d/%m %H:%M')
+                        else:
+                            end_str = str(end_time)[:16]
+                        request_str += f" ({start_str} - {end_str})"
+                    
+                    summary_parts.append(request_str)
+        
+        # Get active ride offers (for drivers)
+        if user_type in ['driver', 'both']:
+            active_offers = []
+            if hasattr(self.user_db, 'mongo') and self.user_db.mongo and self.user_db.mongo.is_connected():
+                try:
+                    user_doc = self.user_db.mongo.get_collection("users").find_one({"phone_number": phone_number})
+                    if user_doc:
+                        user_id = user_doc.get('_id')
+                        # Ride offers are stored as ride_requests with type="driver_offer"
+                        offers_cursor = self.user_db.mongo.get_collection("ride_requests").find({
+                            "requester_id": user_id,
+                            "type": "driver_offer",
+                            "status": {"$in": ["pending", "active"]}
+                        }).sort("created_at", -1).limit(5)  # Show up to 5 recent offers
+                        active_offers = list(offers_cursor)
+                except Exception as e:
+                    logger.warning(f"Failed to fetch ride offers from database: {e}")
+            
+            if active_offers:
+                summary_parts.append("")  # Empty line before offers
+                summary_parts.append("🚗 הצעות נסיעה פעילות:")
+                for idx, offer in enumerate(active_offers, 1):
+                    dest = offer.get('destination', '')
+                    start_time = offer.get('start_time_range')
+                    end_time = offer.get('end_time_range')
+                    
+                    offer_str = f"   {idx}. ל-{dest}"
+                    if start_time and end_time:
+                        start_str = start_time.strftime('%d/%m %H:%M') if isinstance(start_time, datetime) else str(start_time)[:16]
+                        end_str = end_time.strftime('%d/%m %H:%M') if isinstance(end_time, datetime) else str(end_time)[:16]
+                        offer_str += f" ({start_str} - {end_str})"
+                    
+                    summary_parts.append(offer_str)
         
         # Alert preferences
         alert_pref = profile.get('alert_preference') or profile.get('alert_frequency')

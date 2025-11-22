@@ -565,15 +565,17 @@ class ConversationEngine:
                     label = opt_data.get('label', opt_id)
                     options_labels.append(f"{opt_id} ({label})")
                 
-                error_msg = f"❌ בחירה לא חוקית.\n\n💡 אנא בחר אחת מהאפשרויות:\n" + "\n".join([f"• {opt}" for opt in options_labels])
+                error_msg = f"❌ נראה שהקלדת טקסט במקום לבחור מספר.\n\n💡 אנא בחר אחת מהאפשרויות:\n" + "\n".join([f"• {opt}" for opt in options_labels])
                 
                 # Add context based on state
                 if 'user_type' in state_id:
-                    error_msg += "\n\n(בחר 1, 2 או 3 כדי להגדיר את סוג המשתמש שלך)"
+                    error_msg += "\n\n(פשוט הקש 1, 2 או 3) 👆"
                 elif 'when' in state_id or 'time' in state_id.lower():
-                    error_msg += "\n\n(בחר מתי אתה צריך את הטרמפ)"
+                    error_msg += "\n\n(פשוט הקש 1, 2, 3 או 4) 👆"
                 elif 'routine' in state_id:
-                    error_msg += "\n\n(בחר האם יש לך שגרת נסיעה קבועה)"
+                    error_msg += "\n\n(פשוט הקש 1 או 2) 👆"
+                else:
+                    error_msg += "\n\n(פשוט הקש את המספר של האפשרות שברצונך לבחור) 👆"
             else:
                 error_msg = "❌ בחירה לא חוקית. אנא בחר מהאפשרויות המוצגות."
             

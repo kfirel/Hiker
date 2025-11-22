@@ -332,7 +332,7 @@ class UserDatabaseMongo:
         # TODO: Implement proper ride request storage in MongoDB
     
     def add_routine(self, phone_number: str, routine_data: Dict[str, Any]):
-        """Add driving routine"""
+        """Add driving routine with time ranges"""
         if not self.user_exists(phone_number):
             self.create_user(phone_number)
         
@@ -344,8 +344,10 @@ class UserDatabaseMongo:
                     phone_number=phone_number,
                     destination=routine_data.get('routine_destination'),
                     days=routine_data.get('routine_days'),
-                    departure_time=routine_data.get('routine_departure_time'),
-                    return_time=routine_data.get('routine_return_time')
+                    departure_time_start=routine_data.get('departure_time_start'),
+                    departure_time_end=routine_data.get('departure_time_end'),
+                    return_time_start=routine_data.get('return_time_start'),
+                    return_time_end=routine_data.get('return_time_end')
                 )
                 self.mongo.get_collection("routines").insert_one(routine_doc)
         else:

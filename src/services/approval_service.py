@@ -182,12 +182,15 @@ class ApprovalService:
             {"$set": {"pending_name_share_match_id": match_id}}
         )
         
+        # Get destination for the message
+        destination = ride_request.get('destination', 'יעד')
+        
         # Ask driver
-        message = f"""✅ אישרת את הבקשה של {hitchhiker_name}!
+        message = f"""✅ אישרת את הבקשה של {hitchhiker_name} (ל-{destination})!
 
-האם לשלוח את הפרטים שלך לטרמפיסט?
+האם לשלוח לטרמפיסט את השם והטלפון שלך?
 
-1. בטח
+1. בטח - לשלוח הכל
 2. מעדיף שתשאל אותי לפני"""
         
         buttons = [
@@ -287,18 +290,27 @@ class ApprovalService:
             return False
         
         # Notify hitchhiker with or without name based on driver's choice
+        # Get hitchhiker and destination info for the message
+        hitchhiker = self.db.get_collection("users").find_one({"_id": match['hitchhiker_id']})
+        hitchhiker_name = "טרמפיסט"
+        destination = "יעד"
+        if hitchhiker:
+            hitchhiker_name = hitchhiker.get('full_name') or hitchhiker.get('whatsapp_name') or 'טרמפיסט'
+        if ride_request:
+            destination = ride_request.get('destination', 'יעד')
+        
         if share_name:
             # Create temporary driver dict with name (ensure preference is 'always')
             driver_with_name = driver.copy()
             driver_with_name['share_name_with_hitchhiker'] = 'always'
             self._notify_hitchhiker_approved(match, driver_with_name, ride_request, match_id)
-            confirmation = "✅ השם שלך נשלח לטרמפיסט! הוא יצור איתך קשר בקרוב. 📲"
+            confirmation = f"✅ אישרת את הבקשה!\n\nפרטי הקשר שלך (שם וטלפון) נשלחו לטרמפיסט {hitchhiker_name} (ל-{destination}).\nהוא יצור איתך קשר בקרוב כדי לתאם את הפרטים! 📲"
         else:
             # Create temporary driver dict without name (set preference to 'never')
             driver_without_name = driver.copy()
             driver_without_name['share_name_with_hitchhiker'] = 'never'
             self._notify_hitchhiker_approved(match, driver_without_name, ride_request, match_id)
-            confirmation = "✅ הטרמפיסט קיבל את פרטי הקשר שלך (ללא שם). הוא יצור איתך קשר בקרוב. 📲"
+            confirmation = f"✅ אישרת את הבקשה!\n\nמספר הטלפון שלך נשלח לטרמפיסט {hitchhiker_name} (ל-{destination}).\nהוא יצור איתך קשר בקרוב כדי לתאם את הפרטים! 📲"
         
         self.whatsapp_client.send_message(driver_phone, confirmation)
         return True
@@ -312,7 +324,14 @@ class ApprovalService:
         
         driver_phone = driver.get('phone_number', '')
         destination = ride_request.get('destination', 'יעד')
-        time_info = ride_request.get('specific_datetime') or ride_request.get('time_range') or 'גמיש'
+        
+        # Format time range for display
+        start_time = ride_request.get('start_time_range')
+        end_time = ride_request.get('end_time_range')
+        if start_time and end_time:
+            time_info = f"{start_time.strftime('%H:%M')}-{end_time.strftime('%H:%M')}"
+        else:
+            time_info = 'גמיש'
         
         # Check driver's preference for sharing name
         # save_to_profile saves directly to root level of user document in MongoDB
@@ -334,9 +353,10 @@ class ApprovalService:
 👤 פרטי הנהג:
 📱 טלפון: {driver_phone}
 📍 נוסע ל: {destination}
-⏰ זמן: {time_info}
+⏰ זמן יציאה משוער: {time_info}
+(הנהג יצא מגברעם בטווח השעות הזה)
 
-תוכל ליצור איתו קשר עכשיו כדי לתאם את הפרטים! 📲"""
+תוכל ליצור איתו קשר עכשיו כדי לתאם את הפרטים המדויקים! 📲"""
         else:  # 'always' or default (should not be 'ask' here as it's handled separately)
             # Send driver name immediately
             driver_name = driver.get('full_name') or driver.get('whatsapp_name') or 'נהג'
@@ -346,9 +366,10 @@ class ApprovalService:
 🚗 שם: {driver_name}
 📱 טלפון: {driver_phone}
 📍 נוסע ל: {destination}
-⏰ זמן: {time_info}
+⏰ זמן יציאה משוער: {time_info}
+(הנהג יצא מגברעם בטווח השעות הזה)
 
-תוכל ליצור איתו קשר עכשיו כדי לתאם את הפרטים! 📲"""
+תוכל ליצור איתו קשר עכשיו כדי לתאם את הפרטים המדויקים! 📲"""
         
         self.whatsapp_client.send_message(hitchhiker['phone_number'], message)
         

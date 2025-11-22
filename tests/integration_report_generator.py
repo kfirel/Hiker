@@ -22,11 +22,18 @@ class IntegrationReportGenerator:
         if not user_id:
             return ("rgb(227, 242, 253)", "rgb(33, 150, 243)")
         
-        if user_id in self.user_colors:
-            return self.user_colors[user_id]
+        # Convert user_id to string if it's not already (handle ObjectId, etc.)
+        from bson import ObjectId
+        if isinstance(user_id, ObjectId):
+            user_id_str = str(user_id)
+        else:
+            user_id_str = str(user_id)
+        
+        if user_id_str in self.user_colors:
+            return self.user_colors[user_id_str]
         
         import hashlib
-        hash_obj = hashlib.md5(user_id.encode())
+        hash_obj = hashlib.md5(user_id_str.encode())
         hash_int = int(hash_obj.hexdigest(), 16)
         
         hue = hash_int % 360
@@ -41,7 +48,7 @@ class IntegrationReportGenerator:
         background_color = f"rgb({int(rgb_bg[0]*255)}, {int(rgb_bg[1]*255)}, {int(rgb_bg[2]*255)})"
         border_color = f"rgb({int(rgb_border[0]*255)}, {int(rgb_border[1]*255)}, {int(rgb_border[2]*255)})"
         
-        self.user_colors[user_id] = (background_color, border_color)
+        self.user_colors[user_id_str] = (background_color, border_color)
         return (background_color, border_color)
     
     def add_scenario(self, scenario_result: Dict[str, Any]):
@@ -413,6 +420,55 @@ class IntegrationReportGenerator:
             if has_error:
                 error_html = f'<div class="error-message"><strong>Error:</strong> {scenario["error"]}</div>'
             
+            # Build matches summary if matches exist
+            matches_summary_html = ""
+            matches = scenario.get('matches', [])
+            db_snapshot = scenario.get('db_snapshot', {})
+            db_matches = db_snapshot.get('matches', [])
+            
+            # Combine matches from both sources
+            all_matches = {}
+            for match in matches:
+                match_id = str(match.get('match_id', '')) or str(match.get('_id', ''))
+                if match_id:
+                    all_matches[match_id] = match
+            for match in db_matches:
+                match_id = str(match.get('match_id', ''))
+                if match_id and match_id not in all_matches:
+                    all_matches[match_id] = match
+            
+            if all_matches:
+                matches_count = len(all_matches)
+                matches_summary_html = f"""
+                <div style="margin: 15px; padding: 15px; background: #e8f5e9; border-left: 4px solid #4caf50; border-radius: 4px;">
+                    <h4 style="margin: 0 0 10px 0; color: #2e7d32;">✅ נמצאו {matches_count} התאמות:</h4>
+                    <ul style="margin: 0; padding-right: 20px;">
+                """
+                for match_id, match in all_matches.items():
+                    status = match.get('status', 'unknown')
+                    driver_response = match.get('driver_response', 'pending')
+                    # Ensure match_id is a string (handle ObjectId)
+                    from bson import ObjectId
+                    if isinstance(match_id, ObjectId):
+                        match_id_str = str(match_id)
+                    else:
+                        match_id_str = str(match_id) if match_id else 'N/A'
+                    matches_summary_html += f"""
+                        <li style="margin: 5px 0;">
+                            <strong>Match ID:</strong> {self._escape_html(match_id_str)} | 
+                            <strong>Status:</strong> {self._escape_html(str(status))} | 
+                            <strong>Driver Response:</strong> {self._escape_html(str(driver_response))}
+                        </li>
+                    """
+                matches_summary_html += "</ul></div>"
+            elif scenario.get('should_match') is True:
+                # Expected matches but none found
+                matches_summary_html = """
+                <div style="margin: 15px; padding: 15px; background: #fff3e0; border-left: 4px solid #ff9800; border-radius: 4px;">
+                    <h4 style="margin: 0; color: #e65100;">⚠️ לא נמצאו התאמות (היה צפוי למצוא)</h4>
+                </div>
+                """
+            
             scenario_html = f"""
             <div class="scenario-section">
                 <div class="scenario-header {status_class}">
@@ -421,6 +477,7 @@ class IntegrationReportGenerator:
                 </div>
                 <div class="scenario-description">{scenario.get('scenario_description', 'No description')}</div>
                 {error_html}
+                {matches_summary_html}
                 {chronological_table_html}
             </div>
             """

@@ -51,17 +51,21 @@ class RoutineModel:
         phone_number: str,
         destination: str,
         days: str,
-        departure_time: str,
-        return_time: str
+        departure_time_start: datetime = None,
+        departure_time_end: datetime = None,
+        return_time_start: datetime = None,
+        return_time_end: datetime = None
     ) -> Dict[str, Any]:
-        """Create new routine document"""
+        """Create new routine document with time ranges"""
         return {
             "user_id": user_id,
             "phone_number": phone_number,  # denormalized for quick access
             "destination": destination,
             "days": days,  # "א-ה" | "ב,ד" | etc.
-            "departure_time": departure_time,  # "07:00"
-            "return_time": return_time,  # "18:00"
+            "departure_time_start": departure_time_start,  # datetime object
+            "departure_time_end": departure_time_end,  # datetime object
+            "return_time_start": return_time_start,  # datetime object
+            "return_time_end": return_time_end,  # datetime object
             "is_active": True,
             "created_at": datetime.now(),
             "updated_at": datetime.now()
@@ -78,12 +82,10 @@ class RideRequestModel:
         request_type: str,
         destination: str,
         origin: str = "גברעם",
-        time_type: str = None,
-        time_range: str = None,
-        specific_datetime: str = None,
-        ride_timing: str = None
+        start_time_range: datetime = None,
+        end_time_range: datetime = None
     ) -> Dict[str, Any]:
-        """Create new ride request"""
+        """Create new ride request with time range"""
         request_id = f"RR_{uuid.uuid4().hex[:12]}"
         
         # Calculate expiration (24 hours from now)
@@ -96,10 +98,8 @@ class RideRequestModel:
             "type": request_type,  # "hitchhiker_request" | "driver_offer"
             "origin": origin,
             "destination": destination,
-            "time_type": time_type,  # "range" | "specific" | "soon"
-            "time_range": time_range,
-            "specific_datetime": specific_datetime,
-            "ride_timing": ride_timing,
+            "start_time_range": start_time_range,  # datetime object
+            "end_time_range": end_time_range,  # datetime object
             "status": "pending",
             "matched_drivers": [],
             "approved_driver_id": None,

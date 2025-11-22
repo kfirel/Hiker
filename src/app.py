@@ -187,13 +187,42 @@ def handle_match_response(driver_phone: str, button_id: str):
                     # Driver will be asked separately - don't send confirmation yet
                     return
                 else:
-                    message = "✅ אישרת את הבקשה! הטרמפיסט יקבל התראה ויצור איתך קשר בקרוב. 📲"
+                    # Get hitchhiker and ride request info for the message
+                    ride_request = user_db.mongo.get_collection("ride_requests").find_one({"_id": match['ride_request_id']})
+                    hitchhiker = None
+                    if ride_request:
+                        hitchhiker = user_db.mongo.get_collection("users").find_one({"_id": ride_request['requester_id']})
+                    
+                    hitchhiker_name = "טרמפיסט"
+                    destination = "יעד"
+                    if hitchhiker:
+                        hitchhiker_name = hitchhiker.get('full_name') or hitchhiker.get('whatsapp_name') or 'טרמפיסט'
+                    if ride_request:
+                        destination = ride_request.get('destination', 'יעד')
+                    
+                    message = f"✅ אישרת את הבקשה!\n\nהטרמפיסט {hitchhiker_name} (ל-{destination}) יקבל את פרטי הקשר שלך ויצור איתך קשר בקרוב. 📲"
             else:
                 message = "❌ שגיאה באישור הבקשה. נסה שוב או פנה לתמיכה."
         else:
             success = approval_service.driver_reject(match_id, driver_phone)
             if success:
-                message = "❌ דחית את הבקשה. הטרמפיסט ימשיך לחפש נהגים אחרים."
+                # Get hitchhiker and ride request info for the message
+                match = user_db.mongo.get_collection("matches").find_one({"match_id": match_id})
+                ride_request = None
+                hitchhiker = None
+                if match:
+                    ride_request = user_db.mongo.get_collection("ride_requests").find_one({"_id": match['ride_request_id']})
+                    if ride_request:
+                        hitchhiker = user_db.mongo.get_collection("users").find_one({"_id": ride_request['requester_id']})
+                
+                hitchhiker_name = "טרמפיסט"
+                destination = "יעד"
+                if hitchhiker:
+                    hitchhiker_name = hitchhiker.get('full_name') or hitchhiker.get('whatsapp_name') or 'טרמפיסט'
+                if ride_request:
+                    destination = ride_request.get('destination', 'יעד')
+                
+                message = f"❌ דחית את הבקשה של {hitchhiker_name} (ל-{destination}).\n\nהטרמפיסט ימשיך לחפש נהגים אחרים. 👍"
             else:
                 message = "❌ שגיאה בדחיית הבקשה. נסה שוב או פנה לתמיכה."
         

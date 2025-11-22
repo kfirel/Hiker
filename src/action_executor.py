@@ -75,16 +75,32 @@ class ActionExecutor:
             return
         
         from src.database.models import RideRequestModel
+        from src.time_utils import parse_time_to_range
         from bson import ObjectId
         
-        # Create driver offer
+        # Get departure timing from user document (check both root and profile)
+        departure_timing = user.get('departure_timing') or profile.get('departure_timing')
+        
+        # Convert departure timing to time range
+        start_time_range, end_time_range = parse_time_to_range(departure_timing or "now", "soon")
+        
+        logger.info(f"⏰ Driver offer time range: {start_time_range} - {end_time_range}")
+        
+        # Get driver destination (check both root and profile)
+        driver_destination = user.get('driver_destination') or profile.get('driver_destination')
+        if not driver_destination:
+            logger.error(f"Driver destination not found for {phone_number}")
+            return
+        
+        # Create driver offer with time range
         driver_offer = RideRequestModel.create(
             requester_id=user['_id'] if isinstance(user['_id'], ObjectId) else ObjectId(user['_id']),
             requester_phone=phone_number,
             request_type="driver_offer",
-            destination=profile.get('driver_destination'),
+            destination=driver_destination,
             origin='גברעם',
-            ride_timing=profile.get('departure_timing')
+            start_time_range=start_time_range,
+            end_time_range=end_time_range
         )
         
         # Save to MongoDB
@@ -101,9 +117,12 @@ class ActionExecutor:
             
             matching_requests = self.matching_service.find_matching_hitchhikers(
                 driver_info,
-                destination=profile.get('driver_destination'),
-                departure_time=None,  # Driver offers don't have fixed departure time
-                days=None
+                destination=driver_destination,
+                departure_time_start=None,  # Driver offers don't have fixed departure time
+                departure_time_end=None,
+                days=None,
+                offer_start_time=start_time_range,
+                offer_end_time=end_time_range
             )
             
             # Create matches
@@ -122,6 +141,16 @@ class ActionExecutor:
                         logger.info(f"Found {len(matches)} matching hitchhikers for driver {phone_number}")
                         # Note: We could notify driver here, but typically we notify hitchhikers
                         # when they create requests, not drivers when they create offers
+                        
+                        # Process auto-approvals for matches marked with auto_approve=True
+                        # This handles the case where driver has 'always' preference and hitchhiker searches later
+                        for match in matches:
+                            if match.get('auto_approve'):
+                                ride_request_id = match.get('ride_request_id')
+                                if ride_request_id:
+                                    logger.info(f"🔄 Match {match.get('match_id', '')} marked for auto-approval, will be processed when hitchhiker searches")
+                                    # Note: Auto-approval will be processed when hitchhiker creates their request
+                                    # and finds this driver offer, or when hitchhiker searches and finds this offer
                 
                 logger.info(f"Saved driver offer and created {len(matches)} matches")
             else:
@@ -147,25 +176,40 @@ class ActionExecutor:
         specific_datetime = user.get('specific_datetime')
         time_range = user.get('time_range')
         
-        logger.info(f"📝 Ride request data from MongoDB: destination={hitchhiker_destination}, ride_timing={ride_timing}, time_range={time_range}")
+        logger.info(f"📝 Ride request data from MongoDB: destination={hitchhiker_destination}, ride_timing={ride_timing}, time_range={time_range}, specific_datetime={specific_datetime}")
         
         if not hitchhiker_destination:
             logger.error(f"No hitchhiker_destination found for {phone_number}")
             return
         
         from src.database.models import RideRequestModel
+        from src.time_utils import parse_time_to_range
         from bson import ObjectId
         
-        # Create ride request
+        # Convert time input to time range
+        # Priority: ride_timing > time_range > specific_datetime
+        time_input = ride_timing or time_range or specific_datetime
+        time_type = None
+        if ride_timing:
+            time_type = "soon"
+        elif time_range:
+            time_type = "range"
+        elif specific_datetime:
+            time_type = "specific"
+        
+        start_time_range, end_time_range = parse_time_to_range(time_input or "now", time_type)
+        
+        logger.info(f"⏰ Converted time to range: {start_time_range} - {end_time_range}")
+        
+        # Create ride request with time range
         ride_request = RideRequestModel.create(
             requester_id=user['_id'] if isinstance(user['_id'], ObjectId) else ObjectId(user['_id']),
             requester_phone=phone_number,
             request_type="hitchhiker_request",
             destination=hitchhiker_destination,
             origin='גברעם',
-            ride_timing=ride_timing,
-            specific_datetime=specific_datetime,
-            time_range=time_range
+            start_time_range=start_time_range,
+            end_time_range=end_time_range
         )
         
         # Save to MongoDB
@@ -202,8 +246,10 @@ class ActionExecutor:
                         len(matches)
                     )
                     
-                    # Note: Auto-approvals will be processed after the confirmation message is sent
-                    # This is handled in conversation_engine.py after the action completes
+                    # Store ride request ID for auto-approval processing after confirmation message is sent
+                    # This ensures hitchhiker gets confirmation message first, then approval notification
+                    self.user_db.update_context(phone_number, 'pending_auto_approval_ride_request_id', str(ride_request['_id']))
+                    logger.info(f"📝 Stored ride request {ride_request['_id']} for auto-approval processing after message is sent")
                 
                 logger.info(f"Saved ride request and created {len(matches)} matches")
             else:
@@ -350,11 +396,25 @@ class ActionExecutor:
                         if hitchhiker:
                             hitchhiker_name = hitchhiker.get('full_name') or hitchhiker.get('whatsapp_name') or 'טרמפיסט'
                         
+                        # Get destination for the message
+                        destination = "יעד"
+                        if ride_request:
+                            destination = ride_request.get('destination', 'יעד')
+                        
+                        # Format time range for display
+                        start_time = ride_request.get('start_time_range') if ride_request else None
+                        end_time = ride_request.get('end_time_range') if ride_request else None
+                        time_info = ""
+                        if start_time and end_time:
+                            time_info = f" בשעה {start_time.strftime('%H:%M')}-{end_time.strftime('%H:%M')}"
+                        
                         # Send friendly notification to driver
                         auto_approval_message = f"""🎉 מצאנו התאמה!
 
-הפרטים שלך נשלחו ל{hitchhiker_name} אוטומטית. 📲
-הוא יצור איתך קשר בקרוב! 🚗"""
+טרמפיסט בשם {hitchhiker_name} מחפש טרמפ ל-{destination}{time_info}.
+
+פרטי הקשר שלך (שם וטלפון) נשלחו אליו אוטומטית. 📲
+הוא יצור איתך קשר בקרוב כדי לתאם את הפרטים! 🚗"""
                         
                         self.notification_service.whatsapp_client.send_message(
                             driver_phone,
@@ -457,9 +517,33 @@ class ActionExecutor:
                 routine_data['routine_days'] = mongo_user.get('routine_days')
             if not routine_data.get('routine_departure_time'):
                 routine_data['routine_departure_time'] = mongo_user.get('routine_departure_time')
+            if not routine_data.get('routine_return_time'):
+                routine_data['routine_return_time'] = mongo_user.get('routine_return_time')
             logger.info(f"📝 Updated routine_data from MongoDB: {routine_data}")
         
-        # Save routine
+        # Convert departure and return times to time ranges
+        from src.time_utils import parse_routine_departure_time
+        
+        departure_time_start, departure_time_end = parse_routine_departure_time(
+            routine_data.get('routine_departure_time'),
+            routine_data.get('routine_days')
+        )
+        
+        return_time_start, return_time_end = parse_routine_departure_time(
+            routine_data.get('routine_return_time'),
+            routine_data.get('routine_days')
+        )
+        
+        logger.info(f"⏰ Departure time range: {departure_time_start} - {departure_time_end}")
+        logger.info(f"⏰ Return time range: {return_time_start} - {return_time_end}")
+        
+        # Save routine with time ranges (update add_routine to handle new format)
+        # For now, keep old format for backward compatibility, but also save time ranges
+        routine_data['departure_time_start'] = departure_time_start
+        routine_data['departure_time_end'] = departure_time_end
+        routine_data['return_time_start'] = return_time_start
+        routine_data['return_time_end'] = return_time_end
+        
         self.user_db.add_routine(phone_number, routine_data)
         
         # Check if matching service available
@@ -496,7 +580,8 @@ class ActionExecutor:
                 matching_requests = self.matching_service.find_matching_hitchhikers(
                     driver_info,
                     destination=routine_data['routine_destination'],
-                    departure_time=routine_data['routine_departure_time'],
+                    departure_time_start=routine_data.get('departure_time_start'),
+                    departure_time_end=routine_data.get('departure_time_end'),
                     days=routine_data['routine_days']
                 )
                 
@@ -527,9 +612,11 @@ class ActionExecutor:
                                         f"הנהג יקבל התראה ויצור איתך קשר אם הוא מעוניין! 📲"
                                     )
                                     # Use notification service's whatsapp client
+                                    # This sends a notification to hitchhiker about new matching driver
                                     self.notification_service.whatsapp_client.send_message(
-                                        hitchhiker_phone, message
+                                        hitchhiker_phone, message, state="driver_routine_match_notification"
                                     )
+                                    logger.info(f"📤 Sent notification to hitchhiker {hitchhiker_phone} about new driver routine")
                     
                     logger.info(f"Saved routine and created {len(matches)} matches")
                 else:
