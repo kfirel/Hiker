@@ -50,7 +50,7 @@ class RoutineModel:
         user_id: ObjectId,
         phone_number: str,
         destination: str,
-        days: str,
+        days: list,  # Array of day strings: ["א", "ב", "ג", "ד", "ה"]
         departure_time_start: datetime = None,
         departure_time_end: datetime = None,
         return_time_start: datetime = None,
@@ -61,7 +61,7 @@ class RoutineModel:
             "user_id": user_id,
             "phone_number": phone_number,  # denormalized for quick access
             "destination": destination,
-            "days": days,  # "א-ה" | "ב,ד" | etc.
+            "days": days,  # Array: ["א", "ב", "ג", "ד", "ה"] | ["ב", "ד"] | etc.
             "departure_time_start": departure_time_start,  # datetime object
             "departure_time_end": departure_time_end,  # datetime object
             "return_time_start": return_time_start,  # datetime object
@@ -101,46 +101,38 @@ class RideRequestModel:
             "start_time_range": start_time_range,  # datetime object
             "end_time_range": end_time_range,  # datetime object
             "status": "pending",
-            "matched_drivers": [],
-            "approved_driver_id": None,
-            "approved_at": None,
-            "notifications_sent": [],
+            # Matched drivers array (replaces matches collection)
+            "matched_drivers": [],  # Array of {driver_id, driver_phone, status, driver_response_at, notification_sent_to_driver, auto_approve, matched_at}
+            "approval_notification_driver_count": 0,
+            "approval_notification_sending": False,
+            "found_at": None,
             "created_at": datetime.now(),
             "updated_at": datetime.now(),
             "expires_at": expires_at
         }
 
 
-class MatchModel:
-    """Match data model"""
-    
-    @staticmethod
-    def create(
-        ride_request_id: ObjectId,
-        driver_id: ObjectId,
-        hitchhiker_id: ObjectId,
-        destination: str,
-        origin: str
-    ) -> Dict[str, Any]:
-        """Create new match"""
-        match_id = f"MATCH_{uuid.uuid4().hex[:12]}"
-        
-        return {
-            "match_id": match_id,
-            "ride_request_id": ride_request_id,
-            "driver_id": driver_id,
-            "hitchhiker_id": hitchhiker_id,
-            "destination": destination,
-            "origin": origin,
-            "matched_time": None,
-            "status": "pending_approval",
-            "driver_response": None,
-            "driver_response_at": None,
-            "notification_sent_to_driver": False,
-            "notification_sent_to_hitchhiker": False,
-            "matched_at": datetime.now(),
-            "updated_at": datetime.now()
-        }
+# MatchModel removed - matches are now stored as matched_drivers array in ride_requests
+# Use helper function to create matched_driver entry instead
+def create_matched_driver_entry(
+    driver_id: ObjectId,
+    driver_phone: str,
+    status: str = "pending_approval",
+    auto_approve: bool = False
+) -> Dict[str, Any]:
+    """Create a matched driver entry for ride_requests.matched_drivers array"""
+    match_id = f"MATCH_{uuid.uuid4().hex[:12]}"  # Generate match_id for button identification
+    return {
+        "match_id": match_id,  # Used for button identification (approve_MATCH_xxx)
+        "driver_id": driver_id,
+        "driver_phone": driver_phone,
+        "status": status,  # "pending_approval" | "approved" | "rejected"
+        "driver_response": None,  # "approved" | "rejected" | None
+        "driver_response_at": None,
+        "notification_sent_to_driver": False,
+        "auto_approve": auto_approve,
+        "matched_at": datetime.now()
+    }
 
 
 

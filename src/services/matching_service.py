@@ -45,10 +45,13 @@ class MatchingService:
             driver = self.db.get_collection("users").find_one({"_id": routine['user_id']})
             if driver and driver.get('user_type') in ['driver', 'both']:
                 score = self._calculate_routine_match_score(routine, time_info, destination)
+                # Use PreferenceHelper for consistent name handling
+                from src.utils.preference_helper import PreferenceHelper
+                driver_name = PreferenceHelper.get_driver_name(driver) or 'נהג'
                 matching_drivers.append({
                     'driver_id': driver['_id'],
                     'driver_phone': driver['phone_number'],
-                    'driver_name': driver.get('full_name') or driver.get('whatsapp_name'),
+                    'driver_name': driver_name,
                     'match_type': 'routine',
                     'routine_id': routine['_id'],
                     'score': score,
@@ -62,10 +65,13 @@ class MatchingService:
             driver = self.db.get_collection("users").find_one({"_id": offer['requester_id']})
             if driver:
                 score = self._calculate_offer_match_score(offer, time_info, destination)
+                # Use PreferenceHelper for consistent name handling
+                from src.utils.preference_helper import PreferenceHelper
+                driver_name = PreferenceHelper.get_driver_name(driver) or 'נהג'
                 matching_drivers.append({
                     'driver_id': driver['_id'],
                     'driver_phone': driver['phone_number'],
-                    'driver_name': driver.get('full_name') or driver.get('whatsapp_name'),
+                    'driver_name': driver_name,
                     'match_type': 'offer',
                     'offer_id': offer['_id'],
                     'score': score,
@@ -153,7 +159,11 @@ class MatchingService:
         
         for routine in routines:
             # Check if routine is active for today
-            days = routine.get('days', '')
+            days = routine.get('days', [])
+            # Handle both array and string formats (backward compatibility)
+            if isinstance(days, str):
+                from src.validation import parse_days_to_array
+                days = parse_days_to_array(days)
             if not self._is_day_in_routine_days(current_day, days):
                 logger.debug(f"Routine {routine.get('_id')} not active for current day {current_day} (days: {days})")
                 continue
@@ -165,11 +175,26 @@ class MatchingService:
             if departure_start and departure_end:
                 # If request has time range, check if ranges overlap
                 # For routines, we need to normalize the dates to the request's date since routines are daily
+                # Routines are stored with generic date (1900-01-01) - we normalize to request date
                 if request_start_time and request_end_time:
                     # Normalize routine times to the request's date
                     request_date = request_start_time.date()
-                    routine_start_normalized = departure_start.replace(year=request_date.year, month=request_date.month, day=request_date.day)
-                    routine_end_normalized = departure_end.replace(year=request_date.year, month=request_date.month, day=request_date.day)
+                    
+                    # Extract time from routine (routines use generic date 1900-01-01)
+                    routine_start_time = departure_start.time()
+                    routine_end_time = departure_end.time()
+                    
+                    # Create normalized datetimes with request's date
+                    routine_start_normalized = datetime.combine(request_date, routine_start_time)
+                    routine_end_normalized = datetime.combine(request_date, routine_end_time)
+                    
+                    # Handle routines that cross midnight (e.g., 23:40 - 00:40)
+                    # If routine_end_time < routine_start_time, it means the time crosses midnight
+                    # In this case, we need to add a day to routine_end after normalization
+                    if routine_end_time < routine_start_time:
+                        # Original routine crosses midnight - add a day to normalized end time
+                        routine_end_normalized = routine_end_normalized + timedelta(days=1)
+                        logger.debug(f"🕐 Routine {routine.get('_id')} crosses midnight - adjusted end time to {routine_end_normalized}")
                     
                     if self._time_ranges_overlap(
                         request_start_time, request_end_time,
@@ -181,11 +206,23 @@ class MatchingService:
                         logger.debug(f"⏰ Routine {routine.get('_id')} time range [{routine_start_normalized} - {routine_end_normalized}] does not overlap with request range [{request_start_time} - {request_end_time}]")
                 else:
                     # If request has no time range, check if current time is within routine range
-                    if is_current_time_in_range(departure_start, departure_end):
-                        logger.info(f"✅ Routine {routine.get('_id')} matches: current time {now} is within routine range [{departure_start} - {departure_end}]")
+                    # Normalize routine times to today's date first
+                    today = now.date()
+                    routine_start_time = departure_start.time()
+                    routine_end_time = departure_end.time()
+                    
+                    routine_start_today = datetime.combine(today, routine_start_time)
+                    routine_end_today = datetime.combine(today, routine_end_time)
+                    
+                    # Handle routines that cross midnight
+                    if routine_end_time < routine_start_time:
+                        routine_end_today = routine_end_today + timedelta(days=1)
+                    
+                    if is_current_time_in_range(routine_start_today, routine_end_today):
+                        logger.info(f"✅ Routine {routine.get('_id')} matches: current time {now} is within routine range [{routine_start_today} - {routine_end_today}]")
                         matching_routines.append(routine)
                     else:
-                        logger.debug(f"⏰ Routine {routine.get('_id')} time range [{departure_start} - {departure_end}] does not include current time {now}")
+                        logger.debug(f"⏰ Routine {routine.get('_id')} time range [{routine_start_today} - {routine_end_today}] does not include current time {now}")
             else:
                 # Fallback: if no time range, include routine (backward compatibility)
                 logger.warning(f"⚠️ Routine {routine.get('_id')} has no time range, including anyway (backward compatibility)")
@@ -232,44 +269,32 @@ class MatchingService:
         
         return matching_offers
     
-    def _is_day_in_routine_days(self, current_day: int, days_str: str) -> bool:
+    def _is_day_in_routine_days(self, current_day: int, days: Any) -> bool:
         """
-        Check if current day (0=Monday, 6=Sunday) is in routine days string
+        Check if current day (0=Monday, 6=Sunday) is in routine days array
         
         Args:
             current_day: Current weekday (0=Monday, 6=Sunday)
-            days_str: Days string like "א-ה", "ב,ד", "כל יום"
+            days: Days array like ["א", "ב", "ג", "ד", "ה"] or string for backward compatibility
         
         Returns:
             True if current day matches routine days
         """
-        if not days_str:
+        if not days:
             return False
         
-        # Hebrew day mapping: א=Sunday(6), ב=Monday(0), ג=Tuesday(1), ד=Wednesday(2), ה=Thursday(3), ו=Friday(4), ש=Saturday(5)
-        hebrew_days = {'א': 6, 'ב': 0, 'ג': 1, 'ד': 2, 'ה': 3, 'ו': 4, 'ש': 5}
+        # Handle string format (backward compatibility)
+        if isinstance(days, str):
+            from src.validation import parse_days_to_array
+            days = parse_days_to_array(days)
         
-        # Check for "כל יום" or "כל הימים"
-        if 'כל' in days_str:
-            return True
-        
-        # Check for range like "א-ה"
-        if '-' in days_str:
-            parts = days_str.split('-')
-            if len(parts) == 2:
-                start_day = hebrew_days.get(parts[0].strip())
-                end_day = hebrew_days.get(parts[1].strip())
-                if start_day is not None and end_day is not None:
-                    # Handle wrap-around (e.g., ו-ב)
-                    if start_day <= end_day:
-                        return start_day <= current_day <= end_day
-                    else:
-                        return current_day >= start_day or current_day <= end_day
-        
-        # Check for comma-separated days like "ב,ד"
-        if ',' in days_str:
-            day_list = [d.strip() for d in days_str.split(',')]
-            for day_char in day_list:
+        # Handle array format
+        if isinstance(days, list):
+            # Hebrew day mapping: א=Sunday(6), ב=Monday(0), ג=Tuesday(1), ד=Wednesday(2), ה=Thursday(3), ו=Friday(4), ש=Saturday(5)
+            hebrew_days = {'א': 6, 'ב': 0, 'ג': 1, 'ד': 2, 'ה': 3, 'ו': 4, 'ש': 5}
+            
+            # Check if current day is in the days array
+            for day_char in days:
                 if hebrew_days.get(day_char) == current_day:
                     return True
         
@@ -352,7 +377,7 @@ class MatchingService:
     def create_matches(self, ride_request_id: ObjectId, hitchhiker_id: ObjectId, 
                       matching_drivers: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
-        Create match documents for all matching drivers
+        Create matched drivers entries in ride_requests.matched_drivers array
         
         Args:
             ride_request_id: Ride request ID
@@ -360,52 +385,52 @@ class MatchingService:
             matching_drivers: List of matching driver info
             
         Returns:
-            List of created match documents
+            List of created matched driver entries
         """
         ride_request = self.db.get_collection("ride_requests").find_one({"_id": ride_request_id})
         if not ride_request:
             logger.error(f"Ride request not found: {ride_request_id}")
             return []
         
-        matches = []
-        matched_drivers_info = []
+        matched_drivers_entries = []
         
         for driver_info in matching_drivers:
-            from src.database.models import MatchModel
+            from src.database.models import create_matched_driver_entry
             
-            match_doc = MatchModel.create(
-                ride_request_id=ride_request_id,
+            # Check driver's preference for auto-approval
+            driver = self.db.get_collection("users").find_one({"_id": driver_info['driver_id']})
+            auto_approve = False
+            if driver:
+                share_name_preference = driver.get('share_name_with_hitchhiker')
+                if not share_name_preference:
+                    profile = driver.get('profile', {})
+                    share_name_preference = profile.get('share_name_with_hitchhiker')
+                if share_name_preference == 'always':
+                    auto_approve = True
+            
+            matched_driver_entry = create_matched_driver_entry(
                 driver_id=driver_info['driver_id'],
-                hitchhiker_id=hitchhiker_id,
-                destination=ride_request['destination'],
-                origin=ride_request.get('origin', 'גברעם')
+                driver_phone=driver_info['driver_phone'],
+                status="pending_approval",
+                auto_approve=auto_approve
             )
             
-            result = self.db.get_collection("matches").insert_one(match_doc)
-            match_doc['_id'] = result.inserted_id
-            matches.append(match_doc)
-            
-            matched_drivers_info.append({
-                "driver_id": driver_info['driver_id'],
-                "driver_phone": driver_info['driver_phone'],
-                "matched_at": datetime.now(),
-                "status": "pending"
-            })
+            matched_drivers_entries.append(matched_driver_entry)
         
-        # Update ride request with matched drivers
+        # Update ride request with matched drivers array
         self.db.get_collection("ride_requests").update_one(
             {"_id": ride_request_id},
             {
                 "$set": {
                     "status": "matched",
-                    "matched_drivers": matched_drivers_info,
+                    "matched_drivers": matched_drivers_entries,
                     "updated_at": datetime.now()
                 }
             }
         )
         
-        logger.info(f"Created {len(matches)} matches for ride request {ride_request_id}")
-        return matches
+        logger.info(f"Created {len(matched_drivers_entries)} matched drivers for ride request {ride_request_id}")
+        return matched_drivers_entries
 
     def find_matching_hitchhikers(self, driver_info: Dict[str, Any], destination: str, 
                                  departure_time_start: datetime = None, departure_time_end: datetime = None,
@@ -512,7 +537,7 @@ class MatchingService:
     
     def _calculate_hitchhiker_match_score(self, request: Dict[str, Any], destination: str,
                                          departure_time_start: datetime = None, departure_time_end: datetime = None,
-                                         days: str = None) -> float:
+                                         days: Any = None) -> float:
         """Calculate match score for a hitchhiker request"""
         score = 1.0
         
@@ -534,7 +559,7 @@ class MatchingService:
                                  matching_requests: List[Dict[str, Any]],
                                  routine_id: ObjectId = None, offer_id: ObjectId = None) -> List[Dict[str, Any]]:
         """
-        Create match documents for a driver with matching hitchhiker requests
+        Add matched driver entries to ride_requests.matched_drivers array
         
         Args:
             driver_id: Driver's user ID
@@ -544,85 +569,76 @@ class MatchingService:
             offer_id: Optional offer ID (if matching from driver offer)
             
         Returns:
-            List of created match documents
+            List of created matched driver entries
         """
-        matches = []
+        matched_drivers_entries = []
         
         for request_info in matching_requests:
             ride_request_id = request_info['ride_request_id']
             hitchhiker_id = request_info['hitchhiker_id']
             
-            # Check if match already exists
-            existing_match = self.db.get_collection("matches").find_one({
-                "ride_request_id": ride_request_id,
-                "driver_id": driver_id,
-                "status": {"$in": ["pending_approval", "approved"]}
-            })
-            
-            if existing_match:
-                logger.info(f"Match already exists for driver {driver_phone} and request {ride_request_id}")
+            # Get ride request to check if driver already matched
+            ride_request = self.db.get_collection("ride_requests").find_one({"_id": ride_request_id})
+            if not ride_request:
+                logger.error(f"Ride request not found: {ride_request_id}")
                 continue
             
-            from src.database.models import MatchModel
-            
-            match_doc = MatchModel.create(
-                ride_request_id=ride_request_id,
-                driver_id=driver_id,
-                hitchhiker_id=hitchhiker_id,
-                destination=request_info['destination'],
-                origin=request_info.get('origin', 'גברעם')
+            # Check if driver already in matched_drivers array
+            matched_drivers = ride_request.get('matched_drivers', [])
+            existing_driver = next(
+                (d for d in matched_drivers if str(d.get('driver_id')) == str(driver_id)),
+                None
             )
             
-            # Add routine/offer reference if available
-            if routine_id:
-                match_doc['routine_id'] = routine_id
-            if offer_id:
-                match_doc['offer_id'] = offer_id
-            
-            result = self.db.get_collection("matches").insert_one(match_doc)
-            match_doc['_id'] = result.inserted_id
+            if existing_driver:
+                logger.info(f"Driver {driver_phone} already matched for request {ride_request_id}")
+                matched_drivers_entries.append(existing_driver)
+                continue
             
             # Check if driver has 'always' preference for sharing name
-            # If so, mark match for auto-approval
             driver = self.db.get_collection("users").find_one({"_id": driver_id})
+            auto_approve = False
             if driver:
                 share_name_preference = driver.get('share_name_with_hitchhiker')
                 if not share_name_preference:
                     profile = driver.get('profile', {})
                     share_name_preference = profile.get('share_name_with_hitchhiker')
-                
                 if share_name_preference == 'always':
-                    # Mark match for auto-approval
-                    self.db.get_collection("matches").update_one(
-                        {"_id": match_doc['_id']},
-                        {"$set": {"auto_approve": True}}
-                    )
-                    logger.info(f"✅ Marked match {match_doc.get('match_id', '')} for auto-approval (driver {driver_phone} has 'always' preference)")
+                    auto_approve = True
             
-            matches.append(match_doc)
+            from src.database.models import create_matched_driver_entry
             
-            # Update ride request status if needed
-            ride_request = self.db.get_collection("ride_requests").find_one({"_id": ride_request_id})
-            if ride_request and ride_request.get('status') == 'pending':
-                self.db.get_collection("ride_requests").update_one(
-                    {"_id": ride_request_id},
-                    {
-                        "$set": {
-                            "status": "matched",
-                            "updated_at": datetime.now()
-                        },
-                        "$push": {
-                            "matched_drivers": {
-                                "driver_id": driver_id,
-                                "driver_phone": driver_phone,
-                                "matched_at": datetime.now(),
-                                "status": "pending"
-                            }
-                        }
+            matched_driver_entry = create_matched_driver_entry(
+                driver_id=driver_id,
+                driver_phone=driver_phone,
+                status="pending_approval",
+                auto_approve=auto_approve
+            )
+            
+            # Add routine/offer reference if available (store in entry for reference)
+            if routine_id:
+                matched_driver_entry['routine_id'] = routine_id
+            if offer_id:
+                matched_driver_entry['offer_id'] = offer_id
+            
+            # Add to matched_drivers array in ride_request
+            self.db.get_collection("ride_requests").update_one(
+                {"_id": ride_request_id},
+                {
+                    "$push": {"matched_drivers": matched_driver_entry},
+                    "$set": {
+                        "status": "matched",
+                        "updated_at": datetime.now()
                     }
-                )
+                }
+            )
+            
+            if auto_approve:
+                logger.info(f"✅ Marked matched driver for auto-approval (driver {driver_phone} has 'always' preference)")
+            
+            matched_drivers_entries.append(matched_driver_entry)
         
-        logger.info(f"Created {len(matches)} matches for driver {driver_phone}")
-        return matches
+        logger.info(f"Created {len(matched_drivers_entries)} matched drivers for driver {driver_phone}")
+        return matched_drivers_entries
 
 

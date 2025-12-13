@@ -200,6 +200,66 @@ class CommandHandler:
         """
         self.user_db.delete_user_data(phone_number)
         return ("כל המידע שלך נמחק. שלח הודעה כדי להתחיל מחדש.", None)
+    
+    def handle_found_ride(self, phone_number: str) -> Tuple[str, Optional[list]]:
+        """Handle 'מצאתי' command - mark ride request as found and stop notifications
+        
+        Args:
+            phone_number: User's phone number
+            
+        Returns:
+            Tuple of (message, buttons)
+        """
+        if not self.user_db._use_mongo or not self.user_db.mongo.is_connected():
+            return ("❌ שגיאה: מסד הנתונים לא זמין.", None)
+        
+        user = self.user_db.mongo.get_collection("users").find_one({"phone_number": phone_number})
+        if not user:
+            return ("❌ לא נמצא משתמש.", None)
+        
+        # Find active ride requests for this hitchhiker
+        active_requests = list(self.user_db.mongo.get_collection("ride_requests").find({
+            "requester_id": user['_id'],
+            "status": {"$in": ["pending", "matched"]}
+        }))
+        
+        if not active_requests:
+            return ("✅ אין לך בקשות טרמפ פעילות כרגע.", None)
+        
+        from datetime import datetime
+        now = datetime.now()
+        
+        # Mark all active requests as "found" (completed)
+        for request in active_requests:
+            self.user_db.mongo.get_collection("ride_requests").update_one(
+                {"_id": request['_id']},
+                {
+                    "$set": {
+                        "status": "found",
+                        "found_at": now
+                    }
+                }
+            )
+            
+            # Also mark all pending matched drivers as "found" to stop notifications
+            self.user_db.mongo.get_collection("ride_requests").update_one(
+                {"_id": request['_id']},
+                {
+                    "$set": {
+                        "matched_drivers.$[elem].status": "found",
+                        "matched_drivers.$[elem].found_at": now
+                    }
+                },
+                array_filters=[{
+                    "elem.status": {"$in": ["pending_approval", "approved"]}
+                }]
+            )
+        
+        num_requests = len(active_requests)
+        if num_requests == 1:
+            return ("✅ מעולה! סימנתי שהמצאת טרמפ. לא אשלח לך עוד התראות על נהגים עבור הבקשה הזו. 🎉", None)
+        else:
+            return (f"✅ מעולה! סימנתי שהמצאת טרמפ עבור {num_requests} בקשות. לא אשלח לך עוד התראות על נהגים. 🎉", None)
 
 
 

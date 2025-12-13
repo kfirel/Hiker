@@ -30,12 +30,21 @@ class UserDatabaseMongo:
         self.db_file = db_file
         self._load_json_database()  # Always load JSON as fallback
         
+        # Check if JSON mode is forced (test mode)
+        from src.config import Config
+        force_json_mode = Config.USE_JSON_MODE
+        
         # Initialize MongoDB client
-        if mongo_client:
+        if mongo_client is not None:
+            # Explicitly provided client (could be None to force JSON mode)
             self.mongo = mongo_client
+        elif force_json_mode:
+            # JSON mode forced - skip MongoDB initialization
+            logger.info("JSON mode forced (USE_JSON_MODE=true), skipping MongoDB initialization")
+            self.mongo = None
         else:
+            # Try to initialize MongoDB
             try:
-                from src.config import Config
                 self.mongo = MongoDBClient(
                     connection_string=Config.MONGODB_URI,
                     db_name=Config.MONGODB_DB_NAME
@@ -339,11 +348,19 @@ class UserDatabaseMongo:
         if self._use_mongo:
             user = self.mongo.get_collection("users").find_one({"phone_number": phone_number})
             if user:
+                # Convert days string to array if needed
+                days = routine_data.get('routine_days')
+                if isinstance(days, str):
+                    from src.validation import parse_days_to_array
+                    days = parse_days_to_array(days)
+                elif not isinstance(days, list):
+                    days = []
+                
                 routine_doc = RoutineModel.create(
                     user_id=ObjectId(user['_id']) if isinstance(user['_id'], str) else user['_id'],
                     phone_number=phone_number,
                     destination=routine_data.get('routine_destination'),
-                    days=routine_data.get('routine_days'),
+                    days=days,  # Now always an array
                     departure_time_start=routine_data.get('departure_time_start'),
                     departure_time_end=routine_data.get('departure_time_end'),
                     return_time_start=routine_data.get('return_time_start'),

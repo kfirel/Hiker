@@ -17,6 +17,8 @@ from src.timer_manager import TimerManager
 from src.database.user_database_mongo import UserDatabaseMongo
 from src.conversation_engine import ConversationEngine
 from src.user_logger import UserLogger
+from src.handlers.match_response_handler import MatchResponseHandler
+from src.utils.button_parser import ButtonParser
 
 logger = logging.getLogger(__name__)
 
@@ -28,28 +30,56 @@ user_logger = UserLogger()
 whatsapp_client = WhatsAppClient(user_logger=user_logger)
 timer_manager = TimerManager(whatsapp_client)
 
-# Use MongoDB only - no fallback
+# Initialize database with mode switching support
+# Mode is determined by environment variables:
+# - USE_JSON_MODE=true: Force JSON mode (test mode)
+# - REQUIRE_MONGODB=true: Require MongoDB, raise error if unavailable
+# - Default: Use MongoDB with JSON fallback
 try:
     user_db = UserDatabaseMongo()
-    logger.info("Using MongoDB database")
+    if Config.USE_JSON_MODE:
+        logger.info("🧪 TEST MODE: Using JSON database (USE_JSON_MODE=true)")
+    elif user_db._use_mongo:
+        logger.info("✅ PRODUCTION MODE: Using MongoDB database")
+    else:
+        logger.info("⚠️ FALLBACK MODE: MongoDB unavailable, using JSON database")
+        if Config.REQUIRE_MONGODB:
+            raise RuntimeError("MongoDB connection is required (REQUIRE_MONGODB=true) but MongoDB is not available. Please ensure MongoDB is running and configured.")
 except Exception as e:
-    logger.error(f"Failed to initialize MongoDB database: {e}")
-    raise RuntimeError("MongoDB connection is required. Please ensure MongoDB is running and configured.")
+    if Config.REQUIRE_MONGODB:
+        logger.error(f"Failed to initialize MongoDB database: {e}")
+        raise RuntimeError("MongoDB connection is required (REQUIRE_MONGODB=true). Please ensure MongoDB is running and configured.")
+    else:
+        logger.warning(f"MongoDB initialization failed: {e}, falling back to JSON")
+        # Create database instance in JSON mode
+        user_db = UserDatabaseMongo(mongo_client=None)
+        user_db._use_mongo = False
 
 conversation_engine = ConversationEngine(user_db=user_db, user_logger=user_logger)
 
-# Initialize services (MongoDB is always available)
+# Initialize services (only if MongoDB is available)
 from src.services.matching_service import MatchingService
 from src.services.notification_service import NotificationService
 
-matching_service = MatchingService(user_db.mongo)
-notification_service = NotificationService(user_db.mongo, whatsapp_client, user_logger)
+if user_db._use_mongo and user_db.mongo:
+    matching_service = MatchingService(user_db.mongo)
+    notification_service = NotificationService(user_db.mongo, whatsapp_client, user_logger)
+    logger.info("✅ Services initialized with MongoDB")
+else:
+    matching_service = None
+    notification_service = None
+    logger.warning("⚠️ Services initialized without MongoDB - matching features disabled")
 
-# Update action executor with services
+# Update action executor with services (if available)
 conversation_engine.action_executor.matching_service = matching_service
 conversation_engine.action_executor.notification_service = notification_service
 
+# Initialize handlers
+match_response_handler = MatchResponseHandler(user_db, whatsapp_client, user_logger)
+button_parser = ButtonParser()
+
 logger.info("Matching and notification services initialized")
+logger.info("Handlers initialized")
 
 @app.route('/webhook', methods=['GET'])
 def webhook_verify():
@@ -104,135 +134,7 @@ def webhook_handler():
         logger.error(f"Error processing webhook: {str(e)}", exc_info=True)
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
-def handle_match_response(driver_phone: str, button_id: str):
-    """
-    Handle driver approval/rejection of a match
-    
-    Args:
-        driver_phone: Driver's phone number
-        button_id: Button ID (e.g., "approve_MATCH_123" or "reject_MATCH_123")
-    """
-    try:
-        # Extract match_id from button_id
-        # Support multiple formats:
-        # - Old: "approve_MATCH_xxx" or "reject_MATCH_xxx"
-        # - New: "1_MATCH_xxx" or "2_MATCH_xxx"
-        # - Simple: "1" or "2" (will be handled by caller)
-        if button_id.startswith('approve_'):
-            match_id = button_id.replace('approve_', '')
-            is_approval = True
-        elif button_id.startswith('reject_'):
-            match_id = button_id.replace('reject_', '')
-            is_approval = False
-        elif button_id.startswith('1_'):
-            match_id = button_id.replace('1_', '')
-            is_approval = True
-        elif button_id.startswith('2_'):
-            match_id = button_id.replace('2_', '')
-            is_approval = False
-        else:
-            logger.error(f"Invalid button ID format: {button_id}")
-            return
-        
-        # MongoDB is always available now
-        
-        # Handle case where match_id is empty or just "MATCH_" (from test inputs)
-        if not match_id or match_id == 'MATCH_':
-            logger.info(f"Empty match_id in button_id: {button_id}, trying to find match from database")
-            # Try to find the most recent pending match for this driver
-            driver = user_db.mongo.get_collection("users").find_one({"phone_number": driver_phone})
-            if driver:
-                matches = list(user_db.mongo.get_collection("matches").find({
-                    "driver_id": driver['_id'],
-                    "status": "pending_approval"
-                }).sort("matched_at", -1).limit(1))
-                if matches:
-                    match_id = matches[0].get('match_id', '')
-                    logger.info(f"Found match_id from database: {match_id}")
-                else:
-                    logger.error(f"No pending matches found for driver {driver_phone}")
-                    whatsapp_client.send_message(driver_phone, "מצטער, לא נמצאה בקשה ממתינה לאישור. נסה שוב מאוחר יותר.")
-                    return
-            else:
-                logger.error(f"Driver not found: {driver_phone}")
-                whatsapp_client.send_message(driver_phone, "מצטער, לא נמצא משתמש במערכת. נסה שוב מאוחר יותר.")
-                return
-        
-        from src.services.approval_service import ApprovalService
-        
-        approval_service = ApprovalService(user_db.mongo, whatsapp_client, user_logger)
-        
-        if is_approval:
-            # Check if this is an auto-approval (driver shouldn't receive confirmation message)
-            match = user_db.mongo.get_collection("matches").find_one({"match_id": match_id})
-            is_auto_approval = match.get('is_auto_approval', False) if match else False
-            
-            success = approval_service.driver_approve(match_id, driver_phone, is_auto_approval=is_auto_approval)
-            if success:
-                # Don't send confirmation message if this was an auto-approval
-                if is_auto_approval:
-                    logger.info(f"Auto-approval for match {match_id} - skipping confirmation message to driver")
-                    return
-                
-                # Check if driver needs to be asked about name sharing
-                driver = user_db.mongo.get_collection("users").find_one({"phone_number": driver_phone})
-                share_name_preference = driver.get('share_name_with_hitchhiker') if driver else None
-                if not share_name_preference and driver:
-                    profile = driver.get('profile', {})
-                    share_name_preference = profile.get('share_name_with_hitchhiker', 'ask')
-                if not share_name_preference:
-                    share_name_preference = 'ask'
-                
-                if share_name_preference == 'ask':
-                    # Driver will be asked separately - don't send confirmation yet
-                    return
-                else:
-                    # Get hitchhiker and ride request info for the message
-                    ride_request = user_db.mongo.get_collection("ride_requests").find_one({"_id": match['ride_request_id']})
-                    hitchhiker = None
-                    if ride_request:
-                        hitchhiker = user_db.mongo.get_collection("users").find_one({"_id": ride_request['requester_id']})
-                    
-                    hitchhiker_name = "טרמפיסט"
-                    destination = "יעד"
-                    if hitchhiker:
-                        hitchhiker_name = hitchhiker.get('full_name') or hitchhiker.get('whatsapp_name') or 'טרמפיסט'
-                    if ride_request:
-                        destination = ride_request.get('destination', 'יעד')
-                    
-                    message = f"✅ אישרת את הבקשה!\n\nהטרמפיסט {hitchhiker_name} (ל-{destination}) יקבל את פרטי הקשר שלך ויצור איתך קשר בקרוב. 📲"
-            else:
-                message = "❌ שגיאה באישור הבקשה. נסה שוב או פנה לתמיכה."
-        else:
-            success = approval_service.driver_reject(match_id, driver_phone)
-            if success:
-                # Get hitchhiker and ride request info for the message
-                match = user_db.mongo.get_collection("matches").find_one({"match_id": match_id})
-                ride_request = None
-                hitchhiker = None
-                if match:
-                    ride_request = user_db.mongo.get_collection("ride_requests").find_one({"_id": match['ride_request_id']})
-                    if ride_request:
-                        hitchhiker = user_db.mongo.get_collection("users").find_one({"_id": ride_request['requester_id']})
-                
-                hitchhiker_name = "טרמפיסט"
-                destination = "יעד"
-                if hitchhiker:
-                    hitchhiker_name = hitchhiker.get('full_name') or hitchhiker.get('whatsapp_name') or 'טרמפיסט'
-                if ride_request:
-                    destination = ride_request.get('destination', 'יעד')
-                
-                message = f"❌ דחית את הבקשה של {hitchhiker_name} (ל-{destination}).\n\nהטרמפיסט ימשיך לחפש נהגים אחרים. 👍"
-            else:
-                message = "❌ שגיאה בדחיית הבקשה. נסה שוב או פנה לתמיכה."
-        
-        # Logging is now automatic in WhatsAppClient.send_message (lowest level)
-        whatsapp_client.send_message(driver_phone, message, state="match_response")
-        
-    except Exception as e:
-        logger.error(f"Error handling match response: {e}", exc_info=True)
-        user_logger.log_error(driver_phone, f"Error handling match response '{button_id}'", e)
-        whatsapp_client.send_message(driver_phone, "מצטער, אירעה שגיאה. נסה שוב או הקש 'עזרה'.")
+# Removed handle_match_response - now using MatchResponseHandler
 
 def process_message(message, value):
     """
@@ -260,13 +162,24 @@ def process_message(message, value):
                         profile_name = contact.get('profile', {}).get('name')
                         if profile_name:
                             logger.info(f"Found profile name from webhook for {from_number}: {profile_name}")
-                            # Save to user profile if user exists
-                            if user_db.user_exists(from_number):
-                                # Only save if not already set (don't override user's entered name)
-                                if not user_db.get_profile_value(from_number, 'full_name'):
-                                    user_db.save_to_profile(from_number, 'whatsapp_name', profile_name)
-                                    # Use WhatsApp name as full_name if no name was entered
+                            # Ensure user exists
+                            if not user_db.user_exists(from_number):
+                                user_db.create_user(from_number)
+                            # Save WhatsApp name BUT DON'T save as full_name yet
+                            # Wait for user confirmation in confirm_whatsapp_name state
+                            if not user_db.get_profile_value(from_number, 'whatsapp_name'):
+                                user_db.save_to_profile(from_number, 'whatsapp_name', profile_name)
+                                logger.info(f"Saved WhatsApp name '{profile_name}' from webhook for {from_number}")
+                            
+                            # Only save as full_name if user already has full_name (backward compatibility)
+                            # OR if user is already registered (don't interfere with confirmation flow)
+                            existing_full_name = user_db.get_profile_value(from_number, 'full_name')
+                            is_registered = user_db.is_registered(from_number)
+                            if existing_full_name or is_registered:
+                                # User already has a name or is registered - safe to save as full_name
+                                if not existing_full_name:
                                     user_db.save_to_profile(from_number, 'full_name', profile_name)
+                                    logger.info(f"Saved WhatsApp name '{profile_name}' as full_name for registered user {from_number}")
                             break
     except Exception as e:
         logger.debug(f"Error extracting profile name from webhook for {from_number}: {e}")
@@ -280,10 +193,21 @@ def process_message(message, value):
                 # Ensure user exists
                 if not user_db.user_exists(from_number):
                     user_db.create_user(from_number)
-                # Save WhatsApp name separately, don't override user's entered name
-                if not user_db.get_profile_value(from_number, 'full_name'):
+                # Save WhatsApp name BUT DON'T save as full_name yet
+                # Wait for user confirmation in confirm_whatsapp_name state
+                if not user_db.get_profile_value(from_number, 'whatsapp_name'):
                     user_db.save_to_profile(from_number, 'whatsapp_name', profile_name)
-                    user_db.save_to_profile(from_number, 'full_name', profile_name)
+                    logger.info(f"Saved WhatsApp name '{profile_name}' for {from_number}")
+                
+                # Only save as full_name if user already has full_name (backward compatibility)
+                # OR if user is already registered (don't interfere with confirmation flow)
+                existing_full_name = user_db.get_profile_value(from_number, 'full_name')
+                is_registered = user_db.is_registered(from_number)
+                if existing_full_name or is_registered:
+                    # User already has a name or is registered - safe to save as full_name
+                    if not existing_full_name:
+                        user_db.save_to_profile(from_number, 'full_name', profile_name)
+                        logger.info(f"Saved WhatsApp name '{profile_name}' as full_name for registered user {from_number}")
         except Exception as e:
             logger.debug(f"Could not fetch profile name for {from_number}: {e}")
     
@@ -299,29 +223,77 @@ def process_message(message, value):
             # User clicked a button
             message_text = interactive.get('button_reply', {}).get('id', '')
             
-            # Check if this is an approval/rejection button
-            # Support both old format (approve_/reject_) and new format (1_/2_)
-            if (message_text.startswith('approve_') or message_text.startswith('reject_') or
-                message_text.startswith('1_') or message_text.startswith('2_')):
-                handle_match_response(from_number, message_text)
-                return
+            # Check current state FIRST - don't treat as match response if user is in registration/flow states
+            current_state = user_db.get_user_state(from_number)
+            
+            # Registration/flow states where "1" or "2" are valid choices, not match approvals
+            registration_states = [
+                'confirm_restart', 'confirm_whatsapp_name', 'ask_full_name',
+                'ask_user_type', 'ask_has_routine', 'ask_looking_for_ride_now',
+                'ask_hitchhiker_when_need_ride', 'ask_set_default_destination',
+                'ask_driver_destination', 'ask_driver_days', 'ask_driver_times',
+                'ask_alert_preference', 'ask_share_name_preference'
+            ]
+            
+            # Check if this is a match response button
+            # BUT: Skip this check if user is in a registration/flow state OR if no pending match exists
+            if current_state not in registration_states and button_parser.is_match_response(message_text):
+                # Before calling handler, check if there's actually a pending match
+                # This prevents false positives for "1" or "2" in regular conversation
+                driver = user_db.mongo.get_collection("users").find_one({"phone_number": from_number})
+                if driver:
+                    # Find ride requests with pending matches for this driver
+                    ride_requests = list(user_db.mongo.get_collection("ride_requests").find({
+                        "matched_drivers.driver_id": driver['_id'],
+                        "matched_drivers.status": "pending_approval",
+                        "matched_drivers.notification_sent_to_driver": True
+                    }).sort("created_at", -1).limit(1))
+                    if ride_requests:
+                        match_response_handler.handle(from_number, message_text)
+                        return
+                # No pending match - treat as regular conversation choice
+                logger.debug(f"User {from_number} sent '{message_text}' in state '{current_state}' but no pending match - treating as conversation choice")
         elif interactive_type == 'list_reply':
             # User selected from list
             message_text = interactive.get('list_reply', {}).get('id', '')
             
             # Check if this is a name sharing response button (check before approval/rejection)
-            if message_text.startswith('share_name_yes_') or message_text.startswith('share_name_no_'):
+            if button_parser.is_name_sharing(message_text):
                 from src.services.approval_service import ApprovalService
                 approval_service = ApprovalService(user_db.mongo, whatsapp_client, user_logger)
                 approval_service.handle_name_sharing_response(from_number, message_text)
                 return
             
-            # Check if this is an approval/rejection button
-            # Support both old format (approve_/reject_) and new format (1_/2_)
-            if (message_text.startswith('approve_') or message_text.startswith('reject_') or
-                message_text.startswith('1_') or message_text.startswith('2_')):
-                handle_match_response(from_number, message_text)
-                return
+            # Check current state FIRST - don't treat as match response if user is in registration/flow states
+            current_state = user_db.get_user_state(from_number)
+            
+            # Registration/flow states where "1" or "2" are valid choices, not match approvals
+            registration_states = [
+                'confirm_restart', 'confirm_whatsapp_name', 'ask_full_name',
+                'ask_user_type', 'ask_has_routine', 'ask_looking_for_ride_now',
+                'ask_hitchhiker_when_need_ride', 'ask_set_default_destination',
+                'ask_driver_destination', 'ask_driver_days', 'ask_driver_times',
+                'ask_alert_preference', 'ask_share_name_preference'
+            ]
+            
+            # Check if this is a match response button
+            # BUT: Skip this check if user is in a registration/flow state OR if no pending match exists
+            if current_state not in registration_states and button_parser.is_match_response(message_text):
+                # Before calling handler, check if there's actually a pending match
+                # This prevents false positives for "1" or "2" in regular conversation
+                driver = user_db.mongo.get_collection("users").find_one({"phone_number": from_number})
+                if driver:
+                    # Find ride requests with pending matches for this driver
+                    ride_requests = list(user_db.mongo.get_collection("ride_requests").find({
+                        "matched_drivers.driver_id": driver['_id'],
+                        "matched_drivers.status": "pending_approval",
+                        "matched_drivers.notification_sent_to_driver": True
+                    }).sort("created_at", -1).limit(1))
+                    if ride_requests:
+                        match_response_handler.handle(from_number, message_text)
+                        return
+                # No pending match - treat as regular conversation choice
+                logger.debug(f"User {from_number} sent '{message_text}' in state '{current_state}' but no pending match - treating as conversation choice")
         else:
             logger.info(f"Ignoring interactive type: {interactive_type}")
             return
@@ -331,45 +303,90 @@ def process_message(message, value):
     
     logger.info(f"Processing message from {from_number}: {message_text}")
     
+    # Log incoming message to user logger BEFORE processing
+    # This ensures all messages are logged, even if they're handled by special handlers
+    user_logger.log_user_message(from_number, message_text)
+    
+    # Check current state FIRST - don't treat as match response if user is confirming restart
+    current_state = user_db.get_user_state(from_number)
+    
     # Check if this is a name sharing response (check before approval/rejection)
-    if message_text.startswith('share_name_yes_') or message_text.startswith('share_name_no_'):
+    if button_parser.is_name_sharing(message_text):
         from src.services.approval_service import ApprovalService
         approval_service = ApprovalService(user_db.mongo, whatsapp_client, user_logger)
         approval_service.handle_name_sharing_response(from_number, message_text)
         return
     
-    # Check if this is an approval/rejection message (even if sent as text, not button)
-    # Support both old format (approve_/reject_) and new format (1_/2_)
-    if (message_text.startswith('approve_') or message_text.startswith('reject_') or
-        message_text.startswith('1_') or message_text.startswith('2_')):
-        handle_match_response(from_number, message_text)
-        return
+    # Check if this is a match response message (even if sent as text, not button)
+    # BUT: Skip this check if user is in registration/flow states
+    registration_states = [
+        'confirm_restart', 'confirm_whatsapp_name', 'ask_full_name',
+        'ask_user_type', 'ask_has_routine', 'ask_looking_for_ride_now',
+        'ask_hitchhiker_when_need_ride', 'ask_set_default_destination',
+        'ask_driver_destination', 'ask_driver_days', 'ask_driver_times',
+        'ask_alert_preference', 'ask_share_name_preference'
+    ]
     
-    # Check if this is a name sharing response (even if sent as text, not button)
-    if message_text.startswith('share_name_yes_') or message_text.startswith('share_name_no_'):
-        from src.services.approval_service import ApprovalService
-        approval_service = ApprovalService(user_db.mongo, whatsapp_client)
-        approval_service.handle_name_sharing_response(from_number, message_text)
-        return
+    if current_state not in registration_states and button_parser.is_match_response(message_text):
+        # Before calling handler, check if there's actually a pending match
+        # This prevents false positives for "1" or "2" in regular conversation
+        driver = user_db.mongo.get_collection("users").find_one({"phone_number": from_number})
+        if driver:
+            # Find ride requests with pending matches for this driver
+            ride_requests = list(user_db.mongo.get_collection("ride_requests").find({
+                "matched_drivers.driver_id": driver['_id'],
+                "matched_drivers.status": "pending_approval",
+                "matched_drivers.notification_sent_to_driver": True
+            }).sort("created_at", -1).limit(1))
+            if ride_requests:
+                match_response_handler.handle(from_number, message_text)
+                return
+        # No pending match - treat as regular conversation choice
+        logger.debug(f"User {from_number} sent '{message_text}' in state '{current_state}' but no pending match - treating as conversation choice")
     
     # Check if user sent "1" or "2" and has a pending match (for simple approval/rejection)
     # Only treat "1"/"2" as approval/rejection if user has a pending match notification
+    # BUT: Skip this check if user is in registration/flow states (they're answering questions, not approving matches)
     if message_text in ['1', '2']:
-        driver = user_db.mongo.get_collection("users").find_one({"phone_number": from_number})
-        if driver:
-            matches = list(user_db.mongo.get_collection("matches").find({
-                "driver_id": driver['_id'],
-                "status": "pending_approval",
-                "notification_sent_to_driver": True  # Only if notification was sent
-            }).sort("matched_at", -1).limit(1))
-            if matches:
-                match_id = matches[0].get('match_id', '')
-                if match_id:
-                    # Convert "1" or "2" to format expected by handle_match_response
-                    button_id = f"{message_text}_{match_id}"
-                    logger.info(f"Treating '{message_text}' as {'approval' if message_text == '1' else 'rejection'} for match {match_id}")
-                    handle_match_response(from_number, button_id)
-                    return
+        # Registration/flow states where "1" or "2" are valid choices, not match approvals
+        registration_states = [
+            'confirm_restart', 'confirm_whatsapp_name', 'ask_full_name',
+            'ask_user_type', 'ask_has_routine', 'ask_looking_for_ride_now',
+            'ask_hitchhiker_when_need_ride', 'ask_set_default_destination',
+            'ask_driver_destination', 'ask_driver_days', 'ask_driver_times',
+            'ask_alert_preference', 'ask_share_name_preference'
+        ]
+        
+        # Only treat as match approval if user is NOT in a registration/flow state
+        if current_state not in registration_states:
+            driver = user_db.mongo.get_collection("users").find_one({"phone_number": from_number})
+            if driver:
+                # Find ride requests with pending matches for this driver
+                ride_requests = list(user_db.mongo.get_collection("ride_requests").find({
+                    "matched_drivers.driver_id": driver['_id'],
+                    "matched_drivers.status": "pending_approval",
+                    "matched_drivers.notification_sent_to_driver": True
+                }).sort("created_at", -1).limit(1))
+                if ride_requests:
+                    # Find the most recent matched driver entry
+                    ride_request = ride_requests[0]
+                    matched_drivers = ride_request.get('matched_drivers', [])
+                    matched_driver = None
+                    for md in sorted(matched_drivers, key=lambda x: x.get('matched_at', ''), reverse=True):
+                        if (str(md.get('driver_id')) == str(driver['_id']) and 
+                            md.get('status') == 'pending_approval' and 
+                            md.get('notification_sent_to_driver')):
+                            matched_driver = md
+                            break
+                    
+                    if matched_driver:
+                        match_id = matched_driver.get('match_id', '')
+                        if match_id:
+                            # Convert "1" or "2" to format expected by handler
+                            button_id = f"{message_text}_{match_id}"
+                            logger.info(f"Treating '{message_text}' as {'approval' if message_text == '1' else 'rejection'} for match {match_id}")
+                            match_response_handler.handle(from_number, button_id)
+                            return
     
     # Reset timer for this user (since they sent a message)
     timer_manager.schedule_followup(from_number, delay_seconds=600)

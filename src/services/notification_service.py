@@ -53,119 +53,118 @@ class NotificationService:
         message = self._build_driver_notification_message(ride_request, hitchhiker)
         
         for driver_phone in driver_phones:
-            # Find match for this driver
+            # Find driver
             driver = self.db.get_collection("users").find_one({"phone_number": driver_phone})
             if not driver:
                 continue
             
-            match = self.db.get_collection("matches").find_one({
-                "ride_request_id": ride_request_id,
-                "driver_id": driver['_id']
-            })
+            # Find matched driver entry in ride_request
+            ride_request = self.db.get_collection("ride_requests").find_one({"_id": ride_request_id})
+            if not ride_request:
+                continue
             
-            if match:
-                # Check if notification already sent (prevent duplicates)
-                if match.get('notification_sent_to_driver'):
-                    logger.info(f"Notification already sent to driver {driver_phone} for match {match['match_id']}")
-                    continue
+            # Find matched driver entry
+            matched_driver = None
+            for md in ride_request.get('matched_drivers', []):
+                if str(md.get('driver_id')) == str(driver['_id']):
+                    matched_driver = md
+                    break
+            
+            if not matched_driver:
+                logger.warning(f"Matched driver entry not found for driver {driver_phone} in ride request {ride_request_id}")
+                continue
+            
+            # Check if notification already sent (prevent duplicates)
+            if matched_driver.get('notification_sent_to_driver'):
+                logger.info(f"Notification already sent to driver {driver_phone} for match {matched_driver.get('match_id')}")
+                continue
+            
+            # Check driver's preference for sharing name
+            share_name_preference = driver.get('share_name_with_hitchhiker')
+            if not share_name_preference:
+                profile = driver.get('profile', {})
+                share_name_preference = profile.get('share_name_with_hitchhiker')
+            if not share_name_preference:
+                share_name_preference = 'ask'
+            
+            logger.info(f"Driver {driver_phone} share_name_preference: {share_name_preference}")
+            
+            if share_name_preference == 'always':
+                # Driver wants to share details automatically - mark for auto-approval
+                logger.info(f"Driver {driver_phone} has 'always' preference - marking for auto-approval")
                 
-                # Check driver's preference for sharing name
-                # save_to_profile saves directly to root level of user document in MongoDB
-                # But get_user returns it nested in 'profile' dict, so check both places
-                share_name_preference = driver.get('share_name_with_hitchhiker')
-                if not share_name_preference:
-                    # Check in profile dict (as returned by get_user)
-                    profile = driver.get('profile', {})
-                    share_name_preference = profile.get('share_name_with_hitchhiker')
-                # Default to 'ask' for backward compatibility (to maintain current behavior)
-                if not share_name_preference:
-                    share_name_preference = 'ask'
-                
-                logger.info(f"Driver {driver_phone} share_name_preference: {share_name_preference}")
-                
-                if share_name_preference == 'always':
-                    # Driver wants to share details automatically - mark for auto-approval
-                    # We'll approve after the hitchhiker receives confirmation message
-                    logger.info(f"Driver {driver_phone} has 'always' preference - marking match {match['match_id']} for auto-approval")
-                    
-                    # Mark match for auto-approval (will be processed after hitchhiker confirmation)
-                    match_id = match.get('match_id', '')
-                    if match_id:
-                        # Mark notification as sent (even though we didn't send one to driver)
-                        # and mark for auto-approval
-                        self.db.get_collection("matches").update_one(
-                            {"_id": match['_id']},
-                            {"$set": {
-                                "notification_sent_to_driver": True,
-                                "auto_approve": True  # Flag to trigger auto-approval later
-                            }}
-                        )
-                        logger.info(f"✅ Marked match {match_id} for auto-approval (driver {driver_phone} has 'always' preference)")
-                    else:
-                        logger.error(f"❌ Match {match['_id']} has no match_id, cannot mark for auto-approval")
-                else:
-                    # Driver wants to be asked - send notification with approval buttons
-                    # Use simple numbers (1/2) - system will find the pending match automatically
-                    buttons = [
-                        {
-                            "type": "reply",
-                            "reply": {
-                                "id": "1",  # 1 = approve (simple number, system finds match)
-                                "title": "✅ מאשר"
-                            }
-                        },
-                        {
-                            "type": "reply",
-                            "reply": {
-                                "id": "2",  # 2 = reject (simple number, system finds match)
-                                "title": "❌ דוחה"
-                            }
-                        }
-                    ]
-                    
-                    # Send message through normal flow (same as regular messages in app.py)
-                    # Logging is now automatic in WhatsAppClient.send_message (lowest level)
-                    success = self.whatsapp_client.send_message(
-                        driver_phone,
-                        message,
-                        buttons=buttons,
-                        state="notification"
+                match_id = matched_driver.get('match_id', '')
+                if match_id:
+                    # Mark notification as sent and auto-approve in matched_drivers array
+                    self.db.get_collection("ride_requests").update_one(
+                        {"_id": ride_request_id, "matched_drivers.match_id": match_id},
+                        {"$set": {
+                            "matched_drivers.$.notification_sent_to_driver": True,
+                            "matched_drivers.$.auto_approve": True
+                        }}
                     )
+                    logger.info(f"✅ Marked match {match_id} for auto-approval (driver {driver_phone} has 'always' preference)")
+                else:
+                    logger.error(f"❌ Matched driver entry has no match_id, cannot mark for auto-approval")
+            else:
+                # Driver wants to be asked - send notification with approval buttons
+                # Use simple numbers (1/2) - system will find the pending match automatically
+                buttons = [
+                    {
+                        "type": "reply",
+                        "reply": {
+                            "id": "1",  # 1 = approve (simple number, system finds match)
+                            "title": "✅ מאשר"
+                        }
+                    },
+                    {
+                        "type": "reply",
+                        "reply": {
+                            "id": "2",  # 2 = reject (simple number, system finds match)
+                            "title": "❌ דוחה"
+                        }
+                    }
+                ]
+                
+                # Send message through normal flow
+                success = self.whatsapp_client.send_message(
+                    driver_phone,
+                    message,
+                    buttons=buttons,
+                    state="notification"
+                )
+                
+                if success:
+                    # Update matched_driver entry to mark notification as sent
+                    match_id = matched_driver.get('match_id', '')
+                    if match_id:
+                        self.db.get_collection("ride_requests").update_one(
+                            {"_id": ride_request_id, "matched_drivers.match_id": match_id},
+                            {"$set": {"matched_drivers.$.notification_sent_to_driver": True}}
+                        )
                     
-                    if success:
-                        # Update match to mark notification as sent (BEFORE logging to prevent duplicates)
-                        self.db.get_collection("matches").update_one(
-                            {"_id": match['_id']},
-                            {"$set": {"notification_sent_to_driver": True}}
-                        )
-                        
-                        # Logging is now automatic in WhatsAppClient.send_message (lowest level)
-                        # The message is already logged when send_message is called
-                        
-                        # Log notification to database
-                        self._log_notification(
-                            driver['_id'],
-                            driver_phone,
-                            "ride_request",
-                            ride_request_id,
-                            match['_id']
-                        )
-                        
-                        logger.info(f"✅ Notification sent to driver {driver_phone} for ride request {ride_request_id}")
-                    else:
-                        logger.error(f"❌ Failed to send notification to driver {driver_phone}")
+                    logger.info(f"✅ Notification sent to driver {driver_phone} for ride request {ride_request_id}")
+                else:
+                    logger.error(f"❌ Failed to send notification to driver {driver_phone}")
     
-    def notify_hitchhiker_matches_found(self, ride_request_id: ObjectId, num_matches: int):
+    def notify_hitchhiker_matches_found(self, ride_request_id: ObjectId, num_matches: int, matching_drivers: List[Dict[str, Any]] = None):
         """
         Notify hitchhiker that matches were found (before driver approval)
+        Send list of ALL matching drivers immediately
         
         Args:
             ride_request_id: Ride request ID
             num_matches: Number of matches found
+            matching_drivers: List of matching driver info dicts (optional, for detailed list)
         """
         ride_request = self.db.get_collection("ride_requests").find_one({"_id": ride_request_id})
         if not ride_request:
             logger.error(f"Ride request not found: {ride_request_id}")
+            return
+        
+        # Check if ride request was already marked as "found"
+        if ride_request.get('status') == 'found':
+            logger.info(f"Ride request {ride_request_id} already marked as found, skipping notification")
             return
         
         hitchhiker = self.db.get_collection("users").find_one({"_id": ride_request['requester_id']})
@@ -176,16 +175,68 @@ class NotificationService:
         if not hitchhiker_phone:
             return
         
-        # Build message
-        if num_matches == 1:
-            message = """🎉 מצאתי לך נהג מתאים!
+        destination = ride_request.get('destination', 'יעד')
+        
+        # Format time range for display
+        start_time = ride_request.get('start_time_range')
+        end_time = ride_request.get('end_time_range')
+        if start_time and end_time:
+            time_info = f"{start_time.strftime('%H:%M')}-{end_time.strftime('%H:%M')}"
+        else:
+            time_info = 'גמיש'
+        
+        # Build message with list of all matching drivers
+        if matching_drivers and len(matching_drivers) > 0:
+            # Import PreferenceHelper for consistent name handling
+            from src.utils.preference_helper import PreferenceHelper
+            
+            # Send detailed list of all matching drivers
+            if len(matching_drivers) == 1:
+                driver_info = matching_drivers[0]
+                # Get driver from database to use PreferenceHelper
+                driver = self.db.get_collection("users").find_one({"_id": driver_info.get('driver_id')})
+                driver_name = PreferenceHelper.get_driver_name(driver) if driver else 'נהג'
+                message = f"""🎉 מצאתי לך נהג מתאים!
+
+🚗 נהג: {driver_name}
+📍 נוסע ל: {destination}
+⏰ זמן יציאה משוער: {time_info}
 
 הנהג יקבל בקרוב התראה על הבקשה שלך.
 אם הוא מאשר - תקבל את פרטי הקשר שלו תוך כמה דקות. 📲
 
 (אם הנהג לא יאשר או לא יגיב תוך זמן סביר, אמשיך לחפש לך נהגים אחרים) 🔍"""
+            else:
+                message = f"""🎉 מצאתי לך {len(matching_drivers)} נהגים מתאימים!
+
+👥 רשימת הנהגים שנמצאו:
+
+"""
+                for i, driver_info in enumerate(matching_drivers, 1):
+                    # Get driver from database to use PreferenceHelper
+                    driver = self.db.get_collection("users").find_one({"_id": driver_info.get('driver_id')})
+                    driver_name = PreferenceHelper.get_driver_name(driver) if driver else f'נהג #{i}'
+                    message += f"""🚗 נהג #{i}: {driver_name}
+📍 נוסע ל: {destination}
+⏰ זמן יציאה משוער: {time_info}
+
+"""
+                
+                message += """הנהגים יקבלו בקרוב התראה על הבקשה שלך.
+הנהג הראשון שיאשר - תקבל את פרטי הקשר שלו תוך כמה דקות. 📲
+
+(אם אף אחד לא יאשר, אמשיך לחפש לך נהגים אחרים) 🔍"""
         else:
-            message = f"""🎉 מצאתי לך {num_matches} נהגים מתאימים!
+            # Fallback to simple message if matching_drivers not provided
+            if num_matches == 1:
+                message = """🎉 מצאתי לך נהג מתאים!
+
+הנהג יקבל בקרוב התראה על הבקשה שלך.
+אם הוא מאשר - תקבל את פרטי הקשר שלו תוך כמה דקות. 📲
+
+(אם הנהג לא יאשר או לא יגיב תוך זמן סביר, אמשיך לחפש לך נהגים אחרים) 🔍"""
+            else:
+                message = f"""🎉 מצאתי לך {num_matches} נהגים מתאימים!
 
 הנהגים יקבלו בקרוב התראה על הבקשה שלך.
 הנהג הראשון שיאשר - תקבל את פרטי הקשר שלו תוך כמה דקות. 📲
@@ -226,23 +277,6 @@ class NotificationService:
 
 האם אתה יכול לעזור?"""
     
-    def _log_notification(self, recipient_id: ObjectId, recipient_phone: str,
-                         notification_type: str, ride_request_id: ObjectId = None,
-                         match_id: ObjectId = None):
-        """Log notification to database"""
-        notification = {
-            "recipient_id": recipient_id,
-            "recipient_phone": recipient_phone,
-            "type": notification_type,
-            "title": "בקשה חדשה לטרמפ",
-            "message": "יש בקשה חדשה לטרמפ",
-            "ride_request_id": ride_request_id,
-            "match_id": match_id,
-            "status": "sent",
-            "sent_at": datetime.now(),
-            "created_at": datetime.now()
-        }
-        
-        self.db.get_collection("notifications").insert_one(notification)
+# _log_notification removed - notifications collection no longer exists
 
 

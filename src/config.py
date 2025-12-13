@@ -13,12 +13,21 @@ class Config:
     WEBHOOK_VERIFY_TOKEN = os.getenv('WEBHOOK_VERIFY_TOKEN')
     
     # Flask Configuration
-    FLASK_PORT = int(os.getenv('FLASK_PORT', 5000))
-    FLASK_DEBUG = os.getenv('FLASK_DEBUG', 'True').lower() == 'true'  # Auto-reload on code changes
+    # Cloud Run sets PORT env var, fallback to FLASK_PORT or 8080
+    FLASK_PORT = int(os.getenv('PORT') or os.getenv('FLASK_PORT', 8080))
+    # Debug mode: default to False in production (when PORT is set by Cloud Run), True in development
+    _flask_debug_default = 'False' if os.getenv('PORT') else 'True'
+    FLASK_DEBUG = os.getenv('FLASK_DEBUG', _flask_debug_default).lower() == 'true'
     
     # MongoDB Configuration
     MONGODB_URI = os.getenv('MONGODB_URI', 'mongodb://localhost:27017/')
     MONGODB_DB_NAME = os.getenv('MONGODB_DB_NAME', 'hiker_db')
+    
+    # Database Mode Configuration
+    # Set to 'true' to force JSON mode (test mode), 'false' or unset to use MongoDB with JSON fallback
+    USE_JSON_MODE = os.getenv('USE_JSON_MODE', 'false').lower() == 'true'
+    # Set to 'true' to require MongoDB (raise error if not available), 'false' to allow JSON fallback
+    REQUIRE_MONGODB = os.getenv('REQUIRE_MONGODB', 'false').lower() == 'true'
     
     # WhatsApp API URL
     WHATSAPP_API_URL = f"https://graph.facebook.com/v18.0/{WHATSAPP_PHONE_NUMBER_ID}/messages"

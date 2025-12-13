@@ -1,6 +1,6 @@
 """
 Action executor module for conversation flow actions
-Handles execution of actions defined in conversation_flow.json
+Handles execution of actions defined in conversation_flow.yml
 """
 
 import logging
@@ -48,6 +48,24 @@ class ActionExecutor:
         self.user_db.save_to_profile(phone_number, 'home_settlement', 'גברעם')
         logger.info(f"Set home_settlement to 'גברעם' for {phone_number}")
     
+    def _execute_save_whatsapp_name_as_full_name(self, phone_number: str, data: Dict[str, Any]):
+        """Save WhatsApp name as full_name"""
+        user = self.user_db.get_user(phone_number)
+        if not user:
+            logger.error(f"User not found: {phone_number}")
+            return
+        
+        # Get WhatsApp name from user document (check both root and profile)
+        profile = user.get('profile', {})
+        whatsapp_name = profile.get('whatsapp_name') or user.get('whatsapp_name')
+        
+        if whatsapp_name:
+            # Save WhatsApp name as full_name
+            self.user_db.save_to_profile(phone_number, 'full_name', whatsapp_name)
+            logger.info(f"Saved WhatsApp name '{whatsapp_name}' as full_name for {phone_number}")
+        else:
+            logger.warning(f"No WhatsApp name found for {phone_number}")
+    
     def _execute_restart_user(self, phone_number: str, data: Dict[str, Any]):
         """Restart user - handled by conversation engine"""
         # This action is handled by conversation engine's _handle_restart
@@ -67,6 +85,11 @@ class ActionExecutor:
     def _execute_save_driver_ride_offer(self, phone_number: str, data: Dict[str, Any]):
         """Save driver ride offer and trigger matching"""
         profile = self.user_db.get_user(phone_number).get('profile', {})
+        
+        # Check if MongoDB is connected
+        if not self.user_db._use_mongo or not self.user_db.mongo.is_connected():
+            logger.error("MongoDB is not connected. Cannot save driver ride offer.")
+            return
         
         # Get user from MongoDB
         user = self.user_db.mongo.get_collection("users").find_one({"phone_number": phone_number})
@@ -162,6 +185,11 @@ class ActionExecutor:
         """Save hitchhiker ride request and trigger matching"""
         logger.info(f"🔄 _execute_save_hitchhiker_ride_request called for {phone_number}")
         
+        # Check if MongoDB is connected
+        if not self.user_db._use_mongo or not self.user_db.mongo.is_connected():
+            logger.error("MongoDB is not connected. Cannot save hitchhiker ride request.")
+            return
+        
         # Get user from MongoDB
         user = self.user_db.mongo.get_collection("users").find_one({"phone_number": phone_number})
         if not user:
@@ -241,9 +269,11 @@ class ActionExecutor:
                     )
                     
                     # Notify hitchhiker that matches were found (before driver approval)
+                    # Send list of ALL matching drivers immediately
                     self.notification_service.notify_hitchhiker_matches_found(
                         ride_request['_id'],
-                        len(matches)
+                        len(matches),
+                        matching_drivers=matching_drivers
                     )
                     
                     # Store ride request ID for auto-approval processing after confirmation message is sent
@@ -262,16 +292,26 @@ class ActionExecutor:
         from src.services.approval_service import ApprovalService
         from bson import ObjectId
         
-        # Find all matches marked for auto-approval that haven't been processed yet
-        # Use atomic operation to prevent race conditions
-        matches = list(self.user_db.mongo.get_collection("matches").find({
-            "ride_request_id": ride_request_id,
-            "auto_approve": True,
-            "status": "pending_approval",
-            "auto_approval_notification_sent": {"$ne": True}  # Only if not already sent
-        }))
+        # Check if MongoDB is connected
+        if not self.user_db._use_mongo or not self.user_db.mongo.is_connected():
+            logger.error("MongoDB is not connected. Cannot process auto-approvals.")
+            return
         
-        if not matches:
+        # Get ride request with matched_drivers array
+        ride_request = self.user_db.mongo.get_collection("ride_requests").find_one({"_id": ride_request_id})
+        if not ride_request:
+            return
+        
+        # Find matched drivers marked for auto-approval
+        matched_drivers = ride_request.get('matched_drivers', [])
+        auto_approve_drivers = [
+            md for md in matched_drivers 
+            if md.get('auto_approve') and 
+               md.get('status') == 'pending_approval' and
+               not md.get('auto_approval_notification_sent', False)
+        ]
+        
+        if not auto_approve_drivers:
             return
         
         approval_service = ApprovalService(
@@ -280,103 +320,101 @@ class ActionExecutor:
             self.notification_service.user_logger if self.notification_service else None
         )
         
-        for match in matches:
-            match_id = match.get('match_id', '')
-            driver_id = match.get('driver_id')
+        for matched_driver in auto_approve_drivers:
+            match_id = matched_driver.get('match_id', '')
+            driver_id = matched_driver.get('driver_id')
             
             if not match_id or not driver_id:
                 continue
             
-            # Use atomic operation to mark match as being processed
-            # This prevents race conditions if function is called multiple times
-            updated_match = self.user_db.mongo.get_collection("matches").find_one_and_update(
+            # Use atomic operation to mark as being processed
+            result = self.user_db.mongo.get_collection("ride_requests").find_one_and_update(
                 {
-                    "_id": match['_id'],
-                    "auto_approve": True,
-                    "status": "pending_approval",
-                    "auto_approval_notification_sent": {"$ne": True}
+                    "_id": ride_request_id,
+                    "matched_drivers.match_id": match_id,
+                    "matched_drivers.auto_approve": True,
+                    "matched_drivers.status": "pending_approval",
+                    "matched_drivers.auto_approval_notification_sent": {"$ne": True}
                 },
                 {
                     "$set": {
-                        "auto_approval_processing": True  # Mark as being processed
+                        "matched_drivers.$.auto_approval_processing": True
                     }
                 },
                 return_document=True
             )
             
-            # If match was already processed by another call, skip it
-            if not updated_match:
+            # If already processed by another call, skip it
+            if not result:
                 logger.info(f"Match {match_id} already being processed, skipping")
                 continue
             
             # Get driver phone number
             driver = self.user_db.mongo.get_collection("users").find_one({"_id": driver_id})
             if not driver:
-                # Clear processing flag if driver not found
-                self.user_db.mongo.get_collection("matches").update_one(
-                    {"_id": match['_id']},
-                    {"$unset": {"auto_approval_processing": ""}}
+                # Clear processing flag
+                self.user_db.mongo.get_collection("ride_requests").update_one(
+                    {"_id": ride_request_id, "matched_drivers.match_id": match_id},
+                    {"$unset": {"matched_drivers.$.auto_approval_processing": ""}}
                 )
                 continue
             
             driver_phone = driver.get('phone_number')
             if not driver_phone:
-                # Clear processing flag if phone not found
-                self.user_db.mongo.get_collection("matches").update_one(
-                    {"_id": match['_id']},
-                    {"$unset": {"auto_approval_processing": ""}}
+                # Clear processing flag
+                self.user_db.mongo.get_collection("ride_requests").update_one(
+                    {"_id": ride_request_id, "matched_drivers.match_id": match_id},
+                    {"$unset": {"matched_drivers.$.auto_approval_processing": ""}}
                 )
                 continue
             
             try:
-                # Check if driver already received notification for this hitchhiker (prevent duplicates across multiple ride requests)
-                # This prevents duplicate notifications if hitchhiker requests multiple times
-                ride_request = self.user_db.mongo.get_collection("ride_requests").find_one({"_id": ride_request_id})
-                hitchhiker_id = ride_request.get('requester_id') if ride_request else None
-                
+                # Check if driver already received notification for this hitchhiker
+                hitchhiker_id = ride_request.get('requester_id')
                 if hitchhiker_id:
-                    existing_notification = self.user_db.mongo.get_collection("matches").find_one({
-                        "driver_id": driver_id,
-                        "hitchhiker_id": hitchhiker_id,
-                        "auto_approval_notification_sent": True,
-                        "status": "approved"
-                    })
+                    # Check other ride requests for this driver-hitchhiker pair
+                    other_requests = list(self.user_db.mongo.get_collection("ride_requests").find({
+                        "requester_id": hitchhiker_id,
+                        "matched_drivers.driver_id": driver_id,
+                        "matched_drivers.status": "approved",
+                        "matched_drivers.auto_approval_notification_sent": True
+                    }))
                     
-                    if existing_notification:
+                    if other_requests:
                         logger.info(f"Driver {driver_phone} already received auto-approval notification for hitchhiker {hitchhiker_id}, skipping duplicate")
-                        # Clear processing flag and continue
-                        self.user_db.mongo.get_collection("matches").update_one(
-                            {"_id": match['_id']},
-                            {"$unset": {"auto_approval_processing": ""}}
+                        # Clear processing flag
+                        self.user_db.mongo.get_collection("ride_requests").update_one(
+                            {"_id": ride_request_id, "matched_drivers.match_id": match_id},
+                            {"$unset": {"matched_drivers.$.auto_approval_processing": ""}}
                         )
                         continue
                 
-                # Use atomic operation to check and mark notification as being sent
-                # This prevents duplicate notifications even if function is called multiple times concurrently
-                notification_match = self.user_db.mongo.get_collection("matches").find_one_and_update(
+                # Use atomic operation to mark notification as being sent
+                notification_result = self.user_db.mongo.get_collection("ride_requests").find_one_and_update(
                     {
-                        "_id": match['_id'],
-                        "auto_approval_notification_sent": {"$ne": True}  # Only if not already sent
+                        "_id": ride_request_id,
+                        "matched_drivers.match_id": match_id,
+                        "matched_drivers.auto_approval_notification_sent": {"$ne": True}
                     },
                     {
                         "$set": {
-                            "auto_approval_notification_sending": True  # Mark as being sent
+                            "matched_drivers.$.auto_approval_notification_sending": True
                         }
                     },
                     return_document=True
                 )
                 
-                # If notification was already sent or is being sent by another call, skip it
-                if not notification_match:
-                    logger.info(f"Driver {driver_phone} notification for match {match_id} already sent or being sent, skipping")
-                    # Clear processing flag and continue
-                    self.user_db.mongo.get_collection("matches").update_one(
-                        {"_id": match['_id']},
-                        {"$unset": {"auto_approval_processing": ""}}
+                # If notification was already sent, skip it
+                if not notification_result:
+                    logger.info(f"Driver {driver_phone} notification for match {match_id} already sent, skipping")
+                    # Clear processing flag
+                    self.user_db.mongo.get_collection("ride_requests").update_one(
+                        {"_id": ride_request_id, "matched_drivers.match_id": match_id},
+                        {"$unset": {"matched_drivers.$.auto_approval_processing": ""}}
                     )
                     continue
                 
-                # Auto-approve the match (mark as auto-approval so driver won't receive confirmation message)
+                # Auto-approve the match
                 logger.info(f"🔄 Processing auto-approval for match {match_id} (driver {driver_phone})")
                 success = approval_service.driver_approve(match_id, driver_phone, is_auto_approval=True)
                 
@@ -387,23 +425,17 @@ class ActionExecutor:
                     notification_sent = False
                     if self.notification_service and self.notification_service.whatsapp_client:
                         # Get hitchhiker info for the message
-                        ride_request = self.user_db.mongo.get_collection("ride_requests").find_one({"_id": ride_request_id})
-                        hitchhiker = None
-                        if ride_request:
-                            hitchhiker = self.user_db.mongo.get_collection("users").find_one({"_id": ride_request['requester_id']})
+                        hitchhiker = self.user_db.mongo.get_collection("users").find_one({"_id": ride_request['requester_id']})
                         
                         hitchhiker_name = "טרמפיסט"
                         if hitchhiker:
                             hitchhiker_name = hitchhiker.get('full_name') or hitchhiker.get('whatsapp_name') or 'טרמפיסט'
                         
-                        # Get destination for the message
-                        destination = "יעד"
-                        if ride_request:
-                            destination = ride_request.get('destination', 'יעד')
+                        destination = ride_request.get('destination', 'יעד')
                         
                         # Format time range for display
-                        start_time = ride_request.get('start_time_range') if ride_request else None
-                        end_time = ride_request.get('end_time_range') if ride_request else None
+                        start_time = ride_request.get('start_time_range')
+                        end_time = ride_request.get('end_time_range')
                         time_info = ""
                         if start_time and end_time:
                             time_info = f" בשעה {start_time.strftime('%H:%M')}-{end_time.strftime('%H:%M')}"
@@ -424,28 +456,28 @@ class ActionExecutor:
                         notification_sent = True
                         logger.info(f"✅ Sent auto-approval notification to driver {driver_phone}")
                     
-                    # Mark as completed and clear flags using atomic operation
-                    self.user_db.mongo.get_collection("matches").update_one(
-                        {"_id": match['_id']},
+                    # Mark as completed and clear flags
+                    self.user_db.mongo.get_collection("ride_requests").update_one(
+                        {"_id": ride_request_id, "matched_drivers.match_id": match_id},
                         {
                             "$set": {
-                                "auto_approval_notification_sent": notification_sent
+                                "matched_drivers.$.auto_approval_notification_sent": notification_sent
                             },
                             "$unset": {
-                                "auto_approve": "",
-                                "auto_approval_processing": "",
-                                "auto_approval_notification_sending": ""  # Clear sending flag
+                                "matched_drivers.$.auto_approve": "",
+                                "matched_drivers.$.auto_approval_processing": "",
+                                "matched_drivers.$.auto_approval_notification_sending": ""
                             }
                         }
                     )
                 else:
                     logger.error(f"❌ Failed to auto-approve match {match_id} for driver {driver_phone}")
                     # Clear processing and sending flags on failure
-                    self.user_db.mongo.get_collection("matches").update_one(
-                        {"_id": match['_id']},
+                    self.user_db.mongo.get_collection("ride_requests").update_one(
+                        {"_id": ride_request_id, "matched_drivers.match_id": match_id},
                         {"$unset": {
-                            "auto_approval_processing": "",
-                            "auto_approval_notification_sending": ""
+                            "matched_drivers.$.auto_approval_processing": "",
+                            "matched_drivers.$.auto_approval_notification_sending": ""
                         }}
                     )
             except Exception as e:
@@ -453,11 +485,11 @@ class ActionExecutor:
                 import traceback
                 logger.error(traceback.format_exc())
                 # Clear processing and sending flags on error
-                self.user_db.mongo.get_collection("matches").update_one(
-                    {"_id": match['_id']},
+                self.user_db.mongo.get_collection("ride_requests").update_one(
+                    {"_id": ride_request_id, "matched_drivers.match_id": match_id},
                     {"$unset": {
-                        "auto_approval_processing": "",
-                        "auto_approval_notification_sending": ""
+                        "matched_drivers.$.auto_approval_processing": "",
+                        "matched_drivers.$.auto_approval_notification_sending": ""
                     }}
                 )
     
@@ -506,8 +538,13 @@ class ActionExecutor:
             routine_data['routine_return_time'] = data.get('input')
             logger.info(f"✅ Using routine_return_time from input: {data.get('input')}")
         
-        # Get values directly from MongoDB
-        mongo_user = self.user_db.mongo.get_collection("users").find_one({"phone_number": phone_number})
+        # Check if MongoDB is connected before accessing it
+        if self.user_db._use_mongo and self.user_db.mongo.is_connected():
+            # Get values directly from MongoDB
+            mongo_user = self.user_db.mongo.get_collection("users").find_one({"phone_number": phone_number})
+        else:
+            mongo_user = None
+        
         if mongo_user:
             logger.info(f"📊 MongoDB user fields: {list(mongo_user.keys())}")
             # Get routine fields directly from MongoDB user document
@@ -521,24 +558,36 @@ class ActionExecutor:
                 routine_data['routine_return_time'] = mongo_user.get('routine_return_time')
             logger.info(f"📝 Updated routine_data from MongoDB: {routine_data}")
         
+        # Convert days string to array if needed
+        routine_days = routine_data.get('routine_days')
+        if isinstance(routine_days, str):
+            from src.validation import parse_days_to_array
+            routine_days = parse_days_to_array(routine_days)
+            routine_data['routine_days'] = routine_days
+        
         # Convert departure and return times to time ranges
         from src.time_utils import parse_routine_departure_time
         
+        # For parse_routine_departure_time, pass days as string if it was originally a string
+        days_for_parsing = routine_data.get('routine_days')
+        if isinstance(days_for_parsing, list):
+            # Convert array back to string for parsing (backward compatibility with parse_routine_departure_time)
+            days_for_parsing = ', '.join(days_for_parsing) if days_for_parsing else None
+        
         departure_time_start, departure_time_end = parse_routine_departure_time(
             routine_data.get('routine_departure_time'),
-            routine_data.get('routine_days')
+            days_for_parsing
         )
         
         return_time_start, return_time_end = parse_routine_departure_time(
             routine_data.get('routine_return_time'),
-            routine_data.get('routine_days')
+            days_for_parsing
         )
         
         logger.info(f"⏰ Departure time range: {departure_time_start} - {departure_time_end}")
         logger.info(f"⏰ Return time range: {return_time_start} - {return_time_end}")
         
-        # Save routine with time ranges (update add_routine to handle new format)
-        # For now, keep old format for backward compatibility, but also save time ranges
+        # Save routine with time ranges
         routine_data['departure_time_start'] = departure_time_start
         routine_data['departure_time_end'] = departure_time_end
         routine_data['return_time_start'] = return_time_start
@@ -552,6 +601,12 @@ class ActionExecutor:
         if self.matching_service:
             
             logger.info(f"✅ Conditions met, proceeding with matching")
+            
+            # Check if MongoDB is connected
+            if not self.user_db._use_mongo or not self.user_db.mongo.is_connected():
+                logger.error("MongoDB is not connected. Cannot save routine and match.")
+                return
+            
             # Get user from MongoDB
             user = self.user_db.mongo.get_collection("users").find_one({"phone_number": phone_number})
             if not user:
@@ -587,7 +642,7 @@ class ActionExecutor:
                 
                 # Create matches
                 if matching_requests:
-                    matches = self.matching_service.create_matches_for_driver(
+                    matched_drivers_entries = self.matching_service.create_matches_for_driver(
                         user['_id'] if isinstance(user['_id'], ObjectId) else ObjectId(user['_id']),
                         phone_number,
                         matching_requests,
@@ -595,28 +650,41 @@ class ActionExecutor:
                     )
                     
                     # Send notifications if notification service available
-                    if self.notification_service and matches:
-                        # Notify hitchhikers about new driver routine
-                        for match in matches:
+                    if self.notification_service and matched_drivers_entries:
+                        # Group by ride_request_id - get unique ride_request_ids from matching_requests
+                        ride_request_ids = list(set([req['ride_request_id'] for req in matching_requests]))
+                        
+                        for ride_request_id in ride_request_ids:
                             ride_request = self.user_db.mongo.get_collection("ride_requests").find_one({
-                                "_id": match['ride_request_id']
+                                "_id": ride_request_id
                             })
-                            if ride_request:
-                                hitchhiker_phone = ride_request.get('requester_phone')
-                                if hitchhiker_phone:
-                                    # Notify hitchhiker about new matching driver
-                                    message = (
-                                        f"🚗 נהג חדש נוסע ל-{routine_data['routine_destination']}!\n\n"
-                                        f"נמצא נהג שמתאים לבקשה שלך. הוא נוסע ב-{routine_data['routine_days']} "
-                                        f"ב-{routine_data['routine_departure_time']}.\n\n"
-                                        f"הנהג יקבל התראה ויצור איתך קשר אם הוא מעוניין! 📲"
-                                    )
-                                    # Use notification service's whatsapp client
-                                    # This sends a notification to hitchhiker about new matching driver
-                                    self.notification_service.whatsapp_client.send_message(
-                                        hitchhiker_phone, message, state="driver_routine_match_notification"
-                                    )
-                                    logger.info(f"📤 Sent notification to hitchhiker {hitchhiker_phone} about new driver routine")
+                            
+                            if not ride_request:
+                                continue
+                            
+                            # Get driver phones for this request (just this driver since we're processing one routine)
+                            driver_phones = [phone_number]
+                            
+                            if driver_phones:
+                                # Notify drivers about the hitchhiker request (same as when hitchhiker registers)
+                                # This will handle auto-approval and regular notifications
+                                self.notification_service.notify_drivers_new_request(
+                                    ObjectId(ride_request_id),
+                                    driver_phones
+                                )
+                                
+                                # Notify hitchhiker that matches were found
+                                self.notification_service.notify_hitchhiker_matches_found(
+                                    ObjectId(ride_request_id),
+                                    len(driver_phones)
+                                )
+                                
+                                logger.info(f"📤 Sent notifications for ride request {ride_request_id}: {len(driver_phones)} driver(s) notified")
+                        
+                        # Process auto-approvals if any matches were created
+                        # This handles drivers with 'always' preference
+                        for ride_request_id in ride_request_ids:
+                            self._process_auto_approvals(ObjectId(ride_request_id))
                     
                     logger.info(f"Saved routine and created {len(matches)} matches")
                 else:

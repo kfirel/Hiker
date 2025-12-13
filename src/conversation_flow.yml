@@ -1,0 +1,931 @@
+flow_version: '1.0'
+description: Hiker chatbot conversation flow for hitchhikers and drivers
+states:
+  initial:
+    id: initial
+    condition: user_not_registered
+    # Automatically use WhatsApp name and go directly to user type selection
+    # This is handled in conversation_engine.py
+    next_state: ask_user_type
+  confirm_whatsapp_name:
+    id: confirm_whatsapp_name
+    # Deprecated - kept for backward compatibility but should not be reached
+    message: 'היי {whatsapp_name}! 👋 ברוכים הבאים להייקר 🚗✨
+
+
+      הבוט החכם של ישוב גברעם שיעזור לך למצוא טרמפים או לתת טרמפים! 😄
+
+
+      בואו נכיר! מצאתי את השם שלך ב-WhatsApp: *{whatsapp_name}*
+
+      האם להשתמש בשם הזה או להקליד שם אחר?
+
+
+      1. ✅ כן, להשתמש ב-{whatsapp_name}
+
+      2. ✏️ לא, להקליד שם אחר'
+    expected_input: choice
+    options:
+      '1':
+        label: ✅ כן, להשתמש בשם מ-WhatsApp
+        value: 'use_whatsapp_name'
+        action: save_whatsapp_name_as_full_name
+        next_state: ask_user_type
+      '2':
+        label: ✏️ לא, להקליד שם אחר
+        value: 'enter_different_name'
+        next_state: ask_full_name
+  ask_full_name:
+    id: ask_full_name
+    # Deprecated - kept for backward compatibility but should not be reached
+    message: 'היי{whatsapp_name}! 👋 ברוכים הבאים להייקר 🚗✨
+
+
+      הבוט החכם של ישוב גברעם שיעזור לך למצוא טרמפים או לתת טרמפים! 😄
+
+
+      בואו נכיר! מה השם המלא שלך?
+
+      (השם יעזור לנהגים וטרמפיסטים לזהות אותך) 🎭'
+    expected_input: text
+    save_to: full_name
+    action: set_gevaram_as_home
+    next_state: ask_user_type
+  ask_user_type:
+    id: ask_user_type
+    message: 'היי {whatsapp_name}! 👋 ברוכים הבאים להייקר 🚗✨
+
+
+      הבוט החכם של ישוב גברעם שיעזור לך למצוא טרמפים או לתת טרמפים! 😄
+
+
+      מי אתה בעולם הטרמפים?
+
+
+      1. 🚶 טרמפיסט (מחפש טרמפים)
+
+      2. 🚗 נהג (נותן טרמפים)'
+    expected_input: choice
+    action: set_gevaram_as_home
+    options:
+      '1':
+        label: 🚶 טרמפיסט
+        value: hitchhiker
+        next_state: ask_looking_for_ride_now
+      '2':
+        label: 🚗 נהג
+        value: driver
+        next_state: ask_has_routine
+    save_to: user_type
+  ask_looking_for_ride_now:
+    id: ask_looking_for_ride_now
+    message: 'אוקיי טרמפיסט שלי! 👍
+
+
+      השאלה החשובה - אתה תקוע עכשיו ומחפש טרמפ? 🏃‍♂️💨
+
+
+      1. ✅ כן! צריך עזרה עכשיו
+
+      2. ⏰ לא, רק להירשם לעתיד'
+    expected_input: choice
+    options:
+      '1':
+        label: ✅ כן, עכשיו!
+        value: 'yes'
+        next_state: ask_hitchhiker_when_need_ride
+      '2':
+        label: ⏰ לא, מאוחר יותר
+        value: 'no'
+        next_state: ask_set_default_destination
+  ask_destination:
+    id: ask_destination
+    message: 'בסדר גמור! 🎯
+
+
+      לאיפה אתה צריך להגיע? 🗺️
+
+
+      (פשוט כתוב את שם היעד)
+
+      💡 למשל: ירושלים, תל אביב, חיפה, באר שבע...'
+    expected_input: text
+    save_to: destination
+    next_state: ask_when
+  ask_when:
+    id: ask_when
+    message: "מצוין! \U0001F44C\n\nאז מתי אתה צריך להגיע ל-{destination}? ⏰\n\n1. \U0001F3C3 היום/מחר - גמיש עם השעות\n  \
+      \ (אתן טווח שעות רחב, למשל 08:00-10:00)\n\n2. \U0001F4C5 תאריך ושעה מדויקים בעתיד\n   (למשל: בעוד שבוע ב-14:30)"
+    expected_input: choice
+    options:
+      '1':
+        label: 🏃 היום/מחר (גמיש)
+        value: soon
+        next_state: ask_time_range
+      '2':
+        label: 📅 תאריך מדויק בעתיד
+        value: specific
+        next_state: ask_specific_datetime
+  ask_time_range:
+    id: ask_time_range
+    message: 'אז מה טווח השעות שמתאים לך להגיע ל-{destination}? ⏰
+
+
+      כתוב טווח שעות בפורמט:
+
+      שעת התחלה-שעת סיום
+
+
+      💡 דוגמאות (הכי פשוט!):
+
+      • 7-9 (פשוט שעות - הכי קל! 😊)
+
+      • 08:00-10:00 (פורמט מלא)
+
+      • 14:30-17:00 (עם דקות)
+
+
+      🎯 טיפ: ככל שהטווח יותר גמיש - יותר סיכוי למצוא נהג! 😉'
+    expected_input: text
+    save_to: time_range
+    next_state: complete_ride_request
+  ask_specific_datetime:
+    id: ask_specific_datetime
+    message: 'אוקיי, אז מה התאריך והשעה להגיע ל-{destination}? 📅⏰
+
+
+      כתוב בפורמט הזה:
+
+      יום/חודש/שנה שעה:דקות
+
+
+      💡 דוגמאות:
+
+      • 15/11/2025 14:30
+
+      • 20/12/2025 08:00
+
+      • מחר 10:00 (זה גם עובד! 😊)'
+    expected_input: text
+    save_to: specific_datetime
+    next_state: complete_ride_request
+  complete_ride_request:
+    id: complete_ride_request
+    message: 'יאללה! 🎉 הבקשה שלך נרשמה במערכת!
+
+
+      📋 המידע שלך:
+
+      {user_summary}
+
+
+      אני כבר מחפש לך נהג מתאים... 🔍🚗
+
+
+      ברגע שאמצא מישהו - תקבל התראה! 📲'
+    action: save_ride_request
+    next_state: check_if_also_driver
+  check_if_also_driver:
+    id: check_if_also_driver
+    # Removed user_type_is_both condition - always go to registration_complete
+    next_state: registration_complete
+  ask_set_default_destination:
+    id: ask_set_default_destination
+    message: 'בסדר גמור! 👍
+
+
+      אני כאן בשבילך 24/7! 💪
+
+
+      רוצה להגדיר "יעד מועדף"?
+
+      (זה מקום שאתה נוסע אליו הרבה, למשל: עבודה, אוניברסיטה...)
+
+
+      ✅ היתרון: בפעם הבאה לא תצטרך להקליד - רק ללחוץ! ⚡
+
+
+      1. ✅ כן, בוא נגדיר
+
+      2. ⏭️ לא צריך'
+    expected_input: choice
+    options:
+      '1':
+        label: ✅ כן, בוא נגדיר
+        value: 'yes'
+        next_state: ask_default_destination_name
+      '2':
+        label: ⏭️ לא צריך
+        value: 'no'
+        message: 'בסדר! 👍
+
+
+          אם תשנה את דעתך, תמיד תוכל להגדיר יעד מועדף מאוחר יותר דרך התפריט (אפשרות "הצג את המידע שלי" → "עדכן יעד מועדף").
+          😊'
+        next_state: check_if_also_driver
+  ask_default_destination_name:
+    id: ask_default_destination_name
+    message: 'מעולה! 🎯
+
+
+      אז מה היעד הקבוע שלך?
+
+
+      (כתוב שם ישוב, עיר, או אזור)
+
+      💡 דוגמאות: ירושלים, תל אביב, צפון, דרום, שפלה...'
+    expected_input: text
+    save_to: default_destination
+    next_state: check_if_also_driver
+  ask_has_routine:
+    id: ask_has_routine
+    message: 'אז עכשיו בואו נדבר עליך כנהג! 🚗💨
+
+
+      יש לך שגרת נסיעה קבועה?
+
+      (למשל: כל יום לעבודה, פעמיים בשבוע לקניות...)
+
+
+      שום דבר מחייב! זה רק כדי לעזור למצוא לך טרמפיסטים מתאימים 😊
+
+
+      1. ✅ כן, יש לי שגרה
+
+      2. ❌ לא, נוסע ספונטני'
+    expected_input: choice
+    options:
+      '1':
+        label: ✅ כן, יש שגרה
+        value: 'yes'
+        next_state: ask_routine_destination
+      '2':
+        label: ❌ לא, ספונטני
+        value: 'no'
+        next_state: ask_alert_frequency
+  ask_routine_destination:
+    id: ask_routine_destination
+    message: 'מגניב! 🎯
+
+
+      אז לאיפה אתה נוסע בדרך כלל?
+
+
+      (כתוב שם ישוב, עיר או אזור)
+
+      💡 למשל: ירושלים, תל אביב, צפון, דרום...'
+    expected_input: text
+    save_to: routine_destination
+    next_state: ask_routine_days
+  ask_routine_days:
+    id: ask_routine_days
+    message: 'נחמד! 📅
+
+
+      באיזה ימים בשבוע אתה נוסע ל-{routine_destination}?
+
+
+      💡 דרכים לכתוב:
+
+      • א-ה (ראשון עד חמישי)
+
+      • א,ג,ה (ימים ספציפיים בפסיקים)
+
+      • כל יום
+
+      • ראשון ושלישי
+
+      • א-ו (ימים ארוכים? 😅)
+
+
+      (כתוב בכל דרך שנוח לך!)'
+    expected_input: text
+    save_to: routine_days
+    next_state: ask_routine_departure_time
+  ask_routine_departure_time:
+    id: ask_routine_departure_time
+    message: 'אוקיי! ⏰
+
+
+      באיזו שעה אתה בדרך כלל יוצא מגברעם ל-{routine_destination}?
+
+
+      (פשוט כתוב את השעה, למשל: 07:00 או 14:30)'
+    expected_input: text
+    save_to: routine_departure_time
+    next_state: ask_routine_return_time
+  ask_routine_return_time:
+    id: ask_routine_return_time
+    message: 'מעולה! 🔄
+
+
+      ובאיזו שעה אתה בדרך כלל *יוצא* מ-{routine_destination} בחזרה?
+
+
+      (לא שעת הגעה - אלא באיזו שעה אתה מתחיל לנסוע חזרה)
+
+      💡 למשל: 18:00
+
+
+      (כן, גם בדרך חזרה אפשר לתת טרמפ! 😊)'
+    expected_input: text
+    save_to: routine_return_time
+    action: save_routine_and_match
+    next_state: ask_another_routine_destination
+  ask_another_routine_destination:
+    id: ask_another_routine_destination
+    message: 'מושלם! 👌
+
+
+      יש לך עוד יעד קבוע שאתה נוסע אליו?
+
+      (גם אחד נוסף זה כבר הרבה! 💪)
+
+
+      1. ✅ כן, יש עוד
+
+      2. ❌ לא, זה הכל'
+    expected_input: choice
+    options:
+      '1':
+        label: ✅ כן, יש עוד
+        value: 'yes'
+        next_state: ask_routine_destination
+      '2':
+        label: ❌ לא, זה הכל
+        value: 'no'
+        next_state: ask_alert_preference
+  ask_alert_preference:
+    id: ask_alert_preference
+    message: "אחלה! כמעט סיימנו! \U0001F389\n\nעכשיו השאלה האחרונה - מתי אני אשלח לך התראות על טרמפיסטים? \U0001F4F2\n\n1.\
+      \ \U0001F514 על כל בקשה שמגיעה\n   (גם אם זה לא ביעדים שלך - תהיה הרבה התראות! \U0001F4F3)\n\n2. \U0001F3AF רק טרמפיסטים\
+      \ שנוסעים ליעדים שלך\n   (תל אביב, ירושלים וכו' - בכל שעה)\n\n3. \U0001F3AF⏰ יעדים שלך + רק בשעות שאתה נוסע\n   (הכי\
+      \ רלוונטי! למשל: רק תל אביב 07:00-09:00)"
+    expected_input: choice
+    options:
+      '1':
+        label: 🔔 על הכל
+        value: all
+        save_to: alert_preference
+        next_state: ask_share_name_preference
+      '2':
+        label: 🎯 היעדים שלי בלבד
+        value: my_destinations
+        save_to: alert_preference
+        next_state: ask_share_name_preference
+      '3':
+        label: 🎯⏰ יעדים + שעות (מומלץ!)
+        value: my_destinations_and_times
+        save_to: alert_preference
+        next_state: ask_share_name_preference
+  ask_share_name_preference:
+    id: ask_share_name_preference
+    message: 'כשאמצא לך טרמפיסט מתאים - אני אוכל לשלוח לו את הפרטים שלך ישירות? 📲
+
+
+      1. בטח! 👍
+
+      2. מעדיף שתשאל אותי לפני 🤔'
+    expected_input: choice
+    options:
+      '1':
+        label: בטח! 👍
+        value: always
+        save_to: share_name_with_hitchhiker
+        message: 'מעולה! 👍
+
+
+          אני אשלח את הפרטים שלך לטרמפיסטים ישירות כשאמצא התאמה.'
+        next_state: registration_complete
+      '2':
+        label: מעדיף שתשאל אותי לפני 🤔
+        value: ask
+        save_to: share_name_with_hitchhiker
+        message: 'בסדר! 👍
+
+
+          אני אשאל אותך בכל פעם לפני שאשלח את הפרטים שלך.'
+        next_state: registration_complete
+  ask_alert_frequency:
+    id: ask_alert_frequency
+    message: "כמעט סיימנו! \U0001F3C1\n\nעכשיו בוא נקבע - על איזה בקשות טרמפ אני אשלח לך התראה? \U0001F4F2\n\n1. \U0001F30D\
+      \ על כל בקשה!\n   (גם אם זה רחוק ממך - תהיה הרבה התראות!)\n\n2. \U0001F4CD רק בקשות באיזור שלי\n   (למשל: רק צפון, רק\
+      \ מרכז... בכל שעה)\n\n3. \U0001F4CD⏰ איזור שלי + בשעות שמתאימות לי\n   (הכי רלוונטי! רק כשאתה באמת יכול לתת טרמפ)\n\n\
+      4. \U0001F515 בלי התראות\n   (אני אכנס לבוט כשאני רוצה)"
+    expected_input: choice
+    options:
+      '1':
+        label: 🌍 הכל!
+        value: all
+        save_to: alert_frequency
+        next_state: registration_complete
+      '2':
+        label: 📍 איזור שלי בלבד
+        value: specific_area_any_time
+        save_to: alert_frequency
+        next_state: registration_complete
+      '3':
+        label: 📍⏰ איזור + שעות (מומלץ!)
+        value: specific_area_and_time
+        save_to: alert_frequency
+        next_state: registration_complete
+      '4':
+        label: 🔕 בלי התראות
+        value: none
+        save_to: alert_frequency
+        next_state: registration_complete
+  registration_complete:
+    id: registration_complete
+    message: 'יאללה! 🎉🎊 סיימנו!
+
+
+      ההרשמה הושלמה בהצלחה! ✅
+
+
+      📋 המידע שלך:
+
+      {user_summary}
+
+
+      מעכשיו אני כאן בשבילך 24/7! 🚗💪
+
+      כל פעם שתצטרך עזרה - פשוט תכתוב לי! 😊
+
+
+      יש טרמפ! 🚙💨
+
+
+      כשתצטרך טרמפ או תרצה להציע טרמפ - פשוט כתוב לי "שלום" ואני אעזור לך! 😊'
+    action: complete_registration
+    next_state: idle
+  registered_user_menu:
+    id: registered_user_menu
+    # Removed user_type_is_both condition - always check driver or hitchhiker
+    next_state: check_driver_or_hitchhiker
+  check_driver_or_hitchhiker:
+    id: check_driver_or_hitchhiker
+    condition: user_is_driver
+    next_state: registered_driver_menu
+    else_next_state: registered_hitchhiker_menu
+  registered_driver_menu:
+    id: registered_driver_menu
+    message: "היי {full_name}! \U0001F44B\U0001F60A\n\nשמח לראות אותך שוב! \U0001F697✨\n\n\U0001F4CB המידע שלך:\n{user_summary}\n\
+      \nמה תרצה לעשות היום?\n\n1. \U0001F504 לעדכן שגרת נסיעות\n   (לשנות יעדים, ימים או שעות)\n\n2. \U0001F697 להודיע שאני\
+      \ עומד לצאת בקרוב\n   (יש לי מקום פנוי בנסיעה)\n\n3. \U0001F4CB הצג את המידע שלי\n\n4. ❓ עזרה\n\n5. \U0001F504 להתחיל\
+      \ הכל מחדש\n   (איפוס מלא)"
+    expected_input: choice
+    options:
+      '1':
+        label: 🔄 עדכון שגרה
+        value: update_routine
+        next_state: ask_has_routine
+      '2':
+        label: 🚗 עומד לצאת
+        value: leaving_soon
+        next_state: ask_driver_when_leaving
+      '3':
+        label: 📋 הצג את המידע שלי
+        value: show_info
+        next_state: show_my_info
+      '4':
+        label: ❓ עזרה
+        value: help
+        action: show_help_command
+      '5':
+        label: 🔄 התחל מחדש
+        value: restart
+        action: restart_user
+  registered_hitchhiker_menu:
+    id: registered_hitchhiker_menu
+    message: "היי {full_name}! \U0001F44B\U0001F60A\n\nשמח לראות אותך שוב! \U0001F697✨\n\n\U0001F4CB המידע שלך:\n{user_summary}\n\
+      \nמה תרצה לעשות היום?\n\n1. \U0001F6B6 מחפש טרמפ!\n   (צריך להגיע לאיזשהו מקום)\n\n2. \U0001F4CB הצג את המידע שלי\n\n\
+      3. ❓ עזרה\n\n4. \U0001F504 להתחיל הכל מחדש\n   (איפוס מלא)"
+    expected_input: choice
+    options:
+      '1':
+        label: 🚶 מחפש טרמפ
+        value: search_ride
+        next_state: ask_hitchhiker_when_need_ride
+      '2':
+        label: 📋 הצג את המידע שלי
+        value: show_info
+        next_state: show_my_info
+      '3':
+        label: ❓ עזרה
+        value: help
+        action: show_help_command
+      '4':
+        label: 🔄 התחל מחדש
+        value: restart
+        action: restart_user
+  registered_both_menu:
+    id: registered_both_menu
+    message: "היי {full_name}! \U0001F44B\U0001F60A\n\nשמח לראות אותך שוב! \U0001F697✨\n\n\U0001F4CB המידע שלך:\n{user_summary}\n\
+      \nמה תרצה לעשות היום?\n\n1. \U0001F6B6 מחפש טרמפ\n   (צריך להגיע למקום)\n\n2. \U0001F697 נותן טרמפ\n   (עומד לצאת בקרוב)\n\
+      \n3. \U0001F504 עדכון שגרת נסיעות\n   (לשנות יעדים, ימים או שעות)\n\n4. \U0001F4CB הצג את המידע שלי\n\n5. ❓ עזרה\n\n\
+      6. \U0001F504 התחל מחדש\n   (איפוס מלא)"
+    expected_input: choice
+    options:
+      '1':
+        label: 🚶 מחפש טרמפ
+        value: search_ride
+        next_state: ask_hitchhiker_when_need_ride
+      '2':
+        label: 🚗 נותן טרמפ
+        value: offer_ride
+        next_state: ask_driver_when_leaving
+      '3':
+        label: 🔄 עדכון שגרה
+        value: update_routine
+        next_state: ask_has_routine
+      '4':
+        label: 📋 הצג את המידע שלי
+        value: show_info
+        next_state: show_my_info
+      '5':
+        label: ❓ עזרה
+        value: help
+        action: show_help_command
+      '6':
+        label: 🔄 התחל מחדש
+        value: restart
+        action: restart_user
+  ask_driver_when_leaving:
+    id: ask_driver_when_leaving
+    message: 'מצוין! 🚗💨
+
+
+      מתי אתה עומד לצאת?
+
+
+      1. ⚡ ממש עכשיו
+
+      2. ⏰ בחצי שעה הקרובה
+
+      3. ⏱️ בשעה הקרובה
+
+      4. 🕐 בשעות הקרובות (2-5 שעות)'
+    expected_input: choice
+    options:
+      '1':
+        label: ⚡ ממש עכשיו
+        value: now
+        next_state: ask_driver_destination
+      '2':
+        label: ⏰ בחצי שעה
+        value: 30min
+        next_state: ask_driver_destination
+      '3':
+        label: ⏱️ בשעה
+        value: 1hour
+        next_state: ask_driver_destination
+      '4':
+        label: 🕐 2-5 שעות
+        value: 2-5hours
+        next_state: ask_driver_destination
+    save_to: departure_timing
+  ask_driver_destination:
+    id: ask_driver_destination
+    message: 'מעולה! 🎯
+
+
+      לאן אתה עומד לנסוע?
+
+
+      (כתוב את שם היעד)
+
+      💡 למשל: ירושלים, תל אביב, חיפה, באר שבע...'
+    expected_input: text
+    save_to: driver_destination
+    next_state: confirm_driver_ride_offer
+  confirm_driver_ride_offer:
+    id: confirm_driver_ride_offer
+    message: 'תודה רבה! 🙏✨
+
+
+      הנסיעה שלך נרשמה במערכת!
+
+
+      📋 המידע שלך:
+
+      {user_summary}
+
+
+      טרמפיסטים מתאימים יקבלו התראה תוך כמה דקות 📲
+
+
+      נסיעה בטוחה! 🚗💨'
+    action: save_driver_ride_offer
+    next_state: idle
+  ask_hitchhiker_when_need_ride:
+    id: ask_hitchhiker_when_need_ride
+    message: 'בסדר! 🚶💨
+
+
+      למתי אתה צריך את הטרמפ?
+
+
+      1. ⚡ ממש עכשיו
+
+      2. ⏰ בחצי שעה הקרובה
+
+      3. ⏱️ בשעה הקרובה
+
+      4. 🕐 בשעות הקרובות (2-5 שעות)'
+    expected_input: choice
+    options:
+      '1':
+        label: ⚡ ממש עכשיו
+        value: now
+        next_state: ask_hitchhiker_destination
+      '2':
+        label: ⏰ בחצי שעה
+        value: 30min
+        next_state: ask_hitchhiker_destination
+      '3':
+        label: ⏱️ בשעה
+        value: 1hour
+        next_state: ask_hitchhiker_destination
+      '4':
+        label: 🕐 2-5 שעות
+        value: 2-5hours
+        next_state: ask_hitchhiker_destination
+    save_to: ride_timing
+  ask_hitchhiker_destination:
+    id: ask_hitchhiker_destination
+    message: 'מצוין! 🎯
+
+
+      לאן אתה צריך להגיע?
+
+
+      (כתוב את שם היעד)
+
+      💡 למשל: ירושלים, תל אביב, חיפה, באר שבע...'
+    expected_input: text
+    save_to: hitchhiker_destination
+    next_state: confirm_hitchhiker_ride_request
+  confirm_hitchhiker_ride_request:
+    id: confirm_hitchhiker_ride_request
+    message: 'יאללה! 🎉
+
+
+      הבקשה שלך נרשמה במערכת!
+
+
+      📋 המידע שלך:
+
+      {user_summary}
+
+
+      אני מחפש לך נהג מתאים עכשיו... 🔍🚗
+
+      אם אמצא נהג מתאים - תקבל התראה תוך כמה דקות! 📲'
+    action: save_hitchhiker_ride_request
+    next_state: idle
+  ask_destination_registered:
+    id: ask_destination_registered
+    message: 'אוקיי! בוא נמצא לך טרמפ! 🚗💨
+
+
+      אתה נוסע ליעד הקבוע שלך ({default_destination})? 🎯
+
+
+      1. ✅ כן, כרגיל!
+
+      2. 🔄 לא, יעד אחר הפעם'
+    expected_input: choice
+    condition: has_default_destination
+    options:
+      '1':
+        label: ✅ כן, כרגיל
+        value: 'yes'
+        action: use_default_destination
+        next_state: ask_when
+      '2':
+        label: 🔄 לא, יעד אחר
+        value: 'no'
+        next_state: ask_destination
+    else_next_state: ask_destination
+  ask_offer_ride_details:
+    id: ask_offer_ride_details
+    message: 'מעולה! תודה שאתה נותן טרמפ! 🙏🚗
+
+
+      בוא נפרסם את הנסיעה שלך:
+
+
+      כתוב את פרטי הנסיעה:
+
+      💡 למשל: "נוסע מתל אביב לירושלים היום ב-14:00, יש 2 מקומות פנויים"
+
+
+      או ספר לי:
+
+      • מאיפה אתה יוצא?
+
+      • לאן אתה נוסע?
+
+      • מתי?
+
+      • כמה מקומות פנויים?'
+    expected_input: text
+    save_to: ride_offer_details
+    next_state: confirm_ride_offer
+    action: save_ride_offer
+  confirm_ride_offer:
+    id: confirm_ride_offer
+    message: 'תודה רבה! 🙏✨
+
+
+      הנסיעה שלך פורסמה!
+
+
+      טרמפיסטים מתאימים יקבלו התראה 📲
+
+
+      אם מישהו מעוניין - נעדכן אותך! 😊
+
+
+      נסיעה בטוחה! 🚗💨'
+    next_state: idle
+  show_help_menu:
+    id: show_help_menu
+    message: '📖 מדריך שימוש בהייקר
+
+
+      🚶 *למחפשי טרמפ:*
+
+      1. לחץ על "מחפש טרמפ"
+
+      2. בחר יעד ושעה
+
+      3. תקבל התראה כשנמצא נהג!
+
+
+      🚗 *לנהגים:*
+
+      1. לחץ על "לתת טרמפ" כשאתה נוסע
+
+      2. או הגדר "שגרת נסיעות" למסלולים קבועים
+
+      3. תקבל התראות על טרמפיסטים מתאימים!
+
+
+      ✨ *טיפים:*
+
+      • ככל שתהיה יותר גמיש עם שעות - יותר סיכוי להתאמה
+
+      • עדכן את השגרה שלך כדי לקבל התראות רלוונטיות
+
+      • אפשר תמיד לכתוב "תפריט" כדי לחזור לתפריט הראשי
+
+
+      💬 *פקודות שימושיות:*
+
+      • תפריט - חזרה לתפריט
+
+      • חדש - התחלה מחדש
+
+      • חזור - חזרה שלב אחורה
+
+      • עזרה - המדריך הזה
+
+
+      יש עוד שאלות? פשוט כתוב! 😊'
+    next_state: idle
+  ask_trip_planning:
+    id: ask_trip_planning
+    message: 'יופי! בוא נתכנן את הנסיעה שלך מראש! 📝✨
+
+
+      (זה שונה מבקשת טרמפ רגילה - כאן אתה מתכנן מראש
+
+      ואני אזכיר לך להזמין טרמפ כשהזמן מתקרב! 🔔)
+
+
+      פשוט תאר לי את הנסיעה:
+
+
+      💡 דוגמאות:
+
+      • נסיעה לירושלים מחר ב-08:00
+
+      • טיול לאילת ביום חמישי
+
+      • נסיעה לחיפה בסוף השבוע'
+    expected_input: text
+    save_to: planned_trip
+    next_state: confirm_trip_saved
+    action: save_planned_trip
+  ask_what_to_update:
+    id: ask_what_to_update
+    message: 'בסדר! בוא נעדכן את הפרטים שלך! ✏️
+
+
+      מה תרצה לשנות?
+
+
+      1. 👤 שם
+
+      2. 🎯 יעדים קבועים
+
+      3. 🔔 העדפות התרעות'
+    expected_input: choice
+    options:
+      '1':
+        label: 👤 שם
+        value: name
+        next_state: update_full_name
+      '2':
+        label: 🎯 יעדים
+        value: destinations
+        next_state: ask_routine_destination
+      '3':
+        label: 🔔 התרעות
+        value: alerts
+        next_state: ask_alert_preference
+  update_full_name:
+    id: update_full_name
+    message: 'אוקיי! ✏️
+
+
+      מה השם החדש שלך?
+
+
+      (כתוב את השם המלא)'
+    expected_input: text
+    save_to: full_name
+    next_state: show_my_info
+  confirm_trip_saved:
+    id: confirm_trip_saved
+    message: 'מושלם! 🎉
+
+
+      הנסיעה שלך נשמרה במערכת! ✅
+
+
+      אעדכן אותך ברגע שיהיו התאמות! 📲
+
+
+      נסיעה טובה! 🚗💨'
+    next_state: idle
+  idle:
+    id: idle
+    action: return_to_idle
+  confirm_restart:
+    id: confirm_restart
+    message: '⚠️ אתה בטוח שאתה רוצה להתחיל מחדש?
+
+
+      זה ימחק את כל המידע שלך! 😱
+
+
+      1. ✅ כן, אני בטוח
+
+      2. ❌ לא, אני רוצה לחזור'
+    expected_input: choice
+    options:
+      '1':
+        label: ✅ כן, אני בטוח
+        value: 'yes'
+        action: restart_user
+      '2':
+        label: ❌ לא, חזור
+        value: 'no'
+        next_state: registered_user_menu
+  show_my_info:
+    id: show_my_info
+    message: '📋 המידע שלך:
+
+
+      {user_summary}
+
+
+      מה תרצה לעשות?
+
+
+      1. ✏️ לערוך פרטים
+
+      2. ✅ הכל בסדר, חזור לתפריט'
+    expected_input: choice
+    options:
+      '1':
+        label: ✏️ לערוך פרטים
+        value: edit
+        next_state: ask_what_to_update
+      '2':
+        label: ✅ חזור לתפריט
+        value: back_to_menu
+        next_state: registered_user_menu
+commands:
+  חזור: go_back
+  back: go_back
+  אחורה: go_back
+  חדש: restart
+  restart: restart
+  מחק: delete_data
+  עזרה: show_help
+  help: show_help
+  תפריט: show_menu
+  menu: show_menu

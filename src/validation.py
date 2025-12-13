@@ -176,6 +176,58 @@ def validate_days(days_input: str) -> Tuple[bool, Optional[str], Optional[str]]:
     return False, None, error_message
 
 
+def parse_days_to_array(days_str: str) -> List[str]:
+    """
+    Parse days string to array format
+    
+    Args:
+        days_str: Days string like "א-ה", "ב,ד", "כל יום"
+    
+    Returns:
+        Array of day strings: ["א", "ב", "ג", "ד", "ה"] or ["ב", "ד"]
+    """
+    if not days_str:
+        return []
+    
+    days_str = days_str.strip()
+    
+    # Check for "כל יום" or "כל הימים"
+    if 'כל' in days_str:
+        return ["א", "ב", "ג", "ד", "ה", "ו", "ש"]
+    
+    # Check for range like "א-ה"
+    if '-' in days_str:
+        parts = days_str.split('-')
+        if len(parts) == 2:
+            start_day = parts[0].strip()
+            end_day = parts[1].strip()
+            # Hebrew days order: א=Sunday, ב=Monday, ג=Tuesday, ד=Wednesday, ה=Thursday, ו=Friday, ש=Saturday
+            hebrew_days = ['א', 'ב', 'ג', 'ד', 'ה', 'ו', 'ש']
+            try:
+                start_idx = hebrew_days.index(start_day)
+                end_idx = hebrew_days.index(end_day)
+                if start_idx <= end_idx:
+                    return hebrew_days[start_idx:end_idx + 1]
+                else:
+                    # Wrap around (e.g., ו-ב)
+                    return hebrew_days[start_idx:] + hebrew_days[:end_idx + 1]
+            except ValueError:
+                return []
+    
+    # Check for comma-separated days like "ב,ד"
+    if ',' in days_str:
+        day_list = [d.strip() for d in days_str.split(',')]
+        # Validate all days are valid Hebrew day characters
+        valid_days = ['א', 'ב', 'ג', 'ד', 'ה', 'ו', 'ש']
+        return [d for d in day_list if d in valid_days]
+    
+    # Single day
+    if days_str in ['א', 'ב', 'ג', 'ד', 'ה', 'ו', 'ש']:
+        return [days_str]
+    
+    return []
+
+
 def validate_time(time_input: str) -> Tuple[bool, Optional[str], Optional[str]]:
     """
     Validate time format input

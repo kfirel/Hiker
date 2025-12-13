@@ -36,11 +36,7 @@ class MongoDBClient:
     def _connect(self):
         """Establish MongoDB connection"""
         try:
-            self.client = MongoClient(
-                self.connection_string,
-                serverSelectionTimeoutMS=5000,
-                connectTimeoutMS=5000
-            )
+            self.client = MongoClient(self.connection_string)
             # Test connection
             self.client.admin.command('ping')
             self.db = self.client[self.db_name]
@@ -76,16 +72,12 @@ class MongoDBClient:
             self.db.ride_requests.create_index("requester_id")
             self.db.ride_requests.create_index([("status", 1), ("destination", 1)])
             self.db.ride_requests.create_index("expires_at", expireAfterSeconds=0)  # TTL index
+            # Index for matched_drivers array queries
+            self.db.ride_requests.create_index("matched_drivers.driver_id")
+            self.db.ride_requests.create_index("matched_drivers.driver_phone")
+            self.db.ride_requests.create_index("matched_drivers.status")
             
-            # Matches indexes
-            self.db.matches.create_index([("ride_request_id", 1), ("status", 1)])
-            self.db.matches.create_index("driver_id")
-            self.db.matches.create_index("hitchhiker_id")
-            self.db.matches.create_index("match_id", unique=True)
-            
-            # Notifications indexes
-            self.db.notifications.create_index([("recipient_id", 1), ("status", 1)])
-            self.db.notifications.create_index("created_at")
+            # Matches and Notifications collections removed - data stored in ride_requests.matched_drivers array
             
             logger.info("✅ MongoDB indexes created")
         except Exception as e:

@@ -1,8 +1,7 @@
 """
-Conversation flow engine that processes the conversation flow JSON
+Conversation flow engine that processes the conversation flow YAML
 """
 
-import json
 import logging
 import re
 import os
@@ -17,6 +16,10 @@ from src.user_logger import UserLogger
 from src.command_handlers import CommandHandler
 from src.action_executor import ActionExecutor
 from src.message_formatter import MessageFormatter
+from src.core.flow_loader import FlowLoader
+from src.core.state_helper import StateHelper
+from src.handlers.text_handler import TextHandler
+from src.handlers.choice_handler import ChoiceHandler
 
 logger = logging.getLogger(__name__)
 
@@ -32,15 +35,13 @@ class ConversationEngine:
     TIME_RANGE_STATES = ['ask_time_range']
     TEXT_STATES = ['ask_specific_datetime']
     
-    def __init__(self, flow_file='conversation_flow.json', user_db=None, user_logger=None):
-        # If relative path, look in src/ directory
-        if not os.path.isabs(flow_file) and not os.path.exists(flow_file):
-            src_dir = os.path.dirname(os.path.abspath(__file__))
-            flow_file = os.path.join(src_dir, flow_file)
-        self.flow_file = flow_file
+    def __init__(self, flow_file='conversation_flow.yml', user_db=None, user_logger=None):
+        # Use FlowLoader to load flow (supports YAML and JSON)
+        flow_loader = FlowLoader(flow_file)
+        self.flow_file = flow_loader.flow_file if hasattr(flow_loader, 'flow_file') else flow_file
         self.user_db = user_db
         self.user_logger = user_logger or UserLogger()
-        self.flow = self._load_flow()
+        self.flow = flow_loader.flow
         self.command_handler = CommandHandler(self)
         
         # Initialize services (MongoDB is always available now)
@@ -60,15 +61,16 @@ class ConversationEngine:
         # Store user_logger for later use when notification_service is set
         self._user_logger = user_logger
         self.message_formatter = MessageFormatter(user_db)
+        
+        # Initialize input handlers
+        self.text_handler = TextHandler(self)
+        self.choice_handler = ChoiceHandler(self)
     
     def _load_flow(self) -> Dict[str, Any]:
-        """Load conversation flow from JSON"""
-        try:
-            with open(self.flow_file, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except Exception as e:
-            logger.error(f"Failed to load conversation flow: {e}")
-            return {'states': {}, 'commands': {}}
+        """Load conversation flow (deprecated - use FlowLoader instead)"""
+        # This method is kept for backward compatibility but delegates to FlowLoader
+        flow_loader = FlowLoader(self.flow_file)
+        return flow_loader.flow
     
     def process_message(self, phone_number: str, message_text: str) -> Tuple[str, Optional[list]]:
         """
@@ -253,6 +255,37 @@ class ConversationEngine:
                 self.user_db.set_user_state(phone_number, 'ask_full_name', {'last_state': 'ask_full_name'})
                 return message, 'ask_full_name', buttons
         
+        # Special handling for initial state - automatically use WhatsApp name and go to user type
+        if state.get('id') == 'initial':
+            # Check if user is already registered (shouldn't be here, but safety check)
+            if self.user_db.is_registered(phone_number):
+                logger.warning(f"User {phone_number} is registered but in initial state, moving to menu")
+                self.user_db.set_user_state(phone_number, 'registered_user_menu', {'last_state': 'registered_user_menu'})
+                menu_state = self.flow['states'].get('registered_user_menu')
+                if menu_state:
+                    return self._process_state(phone_number, menu_state, user_input)
+            
+            # Automatically save WhatsApp name as full_name if available
+            whatsapp_name = self.user_db.get_profile_value(phone_number, 'whatsapp_name')
+            if whatsapp_name:
+                # Save WhatsApp name as full_name automatically
+                existing_full_name = self.user_db.get_profile_value(phone_number, 'full_name')
+                if not existing_full_name:
+                    self.user_db.save_to_profile(phone_number, 'full_name', whatsapp_name)
+                    logger.info(f"Automatically saved WhatsApp name '{whatsapp_name}' as full_name for {phone_number}")
+            
+            # Set Gevaram as home settlement
+            self.action_executor.execute(phone_number, 'set_gevaram_as_home', {})
+            
+            # Go directly to ask_user_type
+            next_state = 'ask_user_type'
+            self.user_db.set_user_state(phone_number, next_state, {'last_state': next_state})
+            user_type_state = self.flow['states'].get(next_state)
+            if user_type_state:
+                message = self._get_state_message(phone_number, user_type_state)
+                buttons = self._build_buttons(user_type_state)
+                return message, next_state, buttons
+        
         # Check state conditions
         if not self._check_condition(phone_number, state):
             # Condition not met, move to else state or skip
@@ -288,73 +321,24 @@ class ConversationEngine:
             # No next state - shouldn't happen, but handle gracefully
             return "שגיאה: לא נמצא מצב המשך", 'idle', None
         
-        # Check if this is the first time in this state (no previous input)
-        # Check if current state matches the state we're processing
-        current_state_id = self.user_db.get_user_state(phone_number)
-        context = self.user_db.get_user_context(phone_number)
-        
-        # It's first time ONLY if current state doesn't match the state we're processing
-        # If current state matches, user is already in this state and input should be processed
-        is_first_time = current_state_id != state['id']
-        
-        # IMPORTANT: If user already sent input (user_input is not empty), process it immediately
-        # This handles the case where state was just updated and user sent input in the same call
-        # This is especially important for rapid state transitions in tests
-        # This check MUST come BEFORE the special case check below
-        if user_input and user_input.strip() and state.get('expected_input'):
-            # User sent input - process it instead of showing first-time message
-            is_first_time = False
-        
-        # Special case: if current state matches but last_state doesn't, it means state was updated
-        # but context wasn't - still treat as first time to show the message
-        # BUT only if user didn't send input (if they did, we already set is_first_time = False above)
-        if current_state_id == state['id'] and context.get('last_state') != state['id'] and is_first_time:
-            # State matches but context doesn't - update context and treat as first time
-            self.user_db.set_user_state(phone_number, state['id'], {'last_state': state['id']}, add_to_history=False)
-            # Only set to first time if user didn't send input
-            if not (user_input and user_input.strip() and state.get('expected_input')):
-                is_first_time = True
+        # Determine if this is the first time entering this state
+        is_first_time, has_user_input = StateHelper.determine_is_first_time(
+            self.user_db, phone_number, state, user_input
+        )
         
         # If first time AND state expects input, show message and wait for input
-        # BUT if user already sent input (user_input is not empty and not a command), process it!
+        # BUT if user already sent input, process it instead of showing first-time message
         if is_first_time:
-            # Check if user_input looks like actual input (not empty, not just whitespace)
-            # If it does, and we're in a state that expects input, process it instead of showing message
-            if state.get('expected_input') and user_input and user_input.strip():
+            # Check if user already sent input - if so, skip first-time message
+            if has_user_input:
                 # User already sent input - process it instead of showing first-time message
                 is_first_time = False
             else:
                 # First time and no input yet - show message
-                message = self._get_state_message(phone_number, state)
-                buttons = self._build_buttons(state)
-                self.user_db.set_user_state(phone_number, state['id'], {'last_state': state['id']})
-                
-                # Perform action if specified on first entry to state (for states without input)
-                if state.get('action') and not state.get('expected_input'):
-                    self.action_executor.execute(phone_number, state['action'], {})
-                
-                # If state has no message and no input expected, auto-advance through routing states
-                if not message and not state.get('expected_input'):
-                    next_state = self._get_next_state(phone_number, state, None)
-                    if next_state:
-                        next_state_def = self.flow['states'].get(next_state)
-                        if next_state_def:
-                            # Continue traversing routing states recursively
-                            if not next_state_def.get('message') and not next_state_def.get('expected_input'):
-                                return self._process_state(phone_number, next_state_def, user_input)
-                            message = self._get_state_message(phone_number, next_state_def)
-                            buttons = self._build_buttons(next_state_def)
-                            self.user_db.set_user_state(phone_number, next_state, {'last_state': next_state})
-                            return message, next_state, buttons
-                
-                # Return with buttons even for first time
-                # If state has expected_input, don't advance yet - wait for user input
-                # But if state has no expected_input, we should advance to next_state
-                if not state.get('expected_input'):
-                    next_state = self._get_next_state(phone_number, state, None)
-                    if next_state:
-                        return message, next_state, buttons
-                return message, None, buttons  # Don't advance yet, wait for user input
+                result = StateHelper.handle_first_time_entry(self, phone_number, state, user_input)
+                if result[0] is not None:  # If message was returned
+                    return result
+                # If None was returned, it means user sent input - continue to process it
         
         # Update last_state in context to mark that we've processed input in this state
         # This prevents treating subsequent messages as first-time entry
@@ -366,42 +350,12 @@ class ConversationEngine:
         expected_input = state.get('expected_input')
         
         if expected_input == 'choice':
-            # Handle choice input (returns 3 values)
-            return self._handle_choice_input(phone_number, state, user_input)
+            # Handle choice input using ChoiceHandler
+            return self.choice_handler.handle(phone_number, state, user_input)
         
         elif expected_input == 'text':
-            # Handle text input (returns 2 values: message, next_state)
-            message, next_state = self._handle_text_input(phone_number, state, user_input)
-            # Build buttons for the next state OR from suggestions
-            buttons = None
-            
-            # Check if there are pending suggestions for interactive selection
-            context = self.user_db.get_user_context(phone_number)
-            if context.get('pending_suggestions') and not next_state:
-                # Build buttons from suggestions
-                suggestions = context['pending_suggestions']
-                buttons = []
-                for i, suggestion in enumerate(suggestions[:3], 1):  # Max 3 buttons
-                    buttons.append({
-                        'type': 'reply',
-                        'reply': {
-                            'id': str(i),
-                            'title': suggestion[:20]  # WhatsApp button title max 20 chars
-                        }
-                    })
-                # Add restart button (always included)
-                buttons.append({
-                    'type': 'reply',
-                    'reply': {
-                        'id': 'restart_button',
-                        'title': '🔄 התחל מחדש'
-                    }
-                })
-            elif next_state:
-                next_state_def = self.flow['states'].get(next_state)
-                if next_state_def:
-                    buttons = self._build_buttons(next_state_def)
-            return message, next_state, buttons
+            # Handle text input using TextHandler
+            return self.text_handler.handle(phone_number, state, user_input)
         
         else:
             # No input expected - this is a routing state or final state
@@ -438,272 +392,8 @@ class ConversationEngine:
             # No next state - shouldn't happen, but handle gracefully
             return "תודה! הפרטים נשמרו.", None, None
     
-    def _handle_choice_input(self, phone_number: str, state: Dict[str, Any], user_input: str) -> Tuple[str, Optional[str], Optional[list]]:
-        """Handle choice-based input
-        
-        Returns:
-            Tuple of (message, next_state, buttons)
-        """
-        # Check if user clicked restart button
-        if user_input == 'restart_button':
-            return self._handle_restart(phone_number)
-        
-        # Handle confirm_restart state specially
-        if state.get('id') == 'confirm_restart':
-            options = state.get('options', {})
-            if user_input in options:
-                choice = options[user_input]
-                if choice.get('value') == 'yes' and choice.get('action') == 'restart_user':
-                    # User confirmed restart - perform it
-                    return self._handle_restart(phone_number)
-                elif choice.get('value') == 'no':
-                    # User cancelled - go back to menu
-                    next_state = choice.get('next_state', 'registered_user_menu')
-                    next_state_def = self.flow['states'].get(next_state)
-                    if next_state_def:
-                        message = self._get_state_message(phone_number, next_state_def)
-                        buttons = self._build_buttons(next_state_def)
-                        return message, next_state, buttons
-                    return "חזרתי לתפריט.", next_state, None
-        
-        options = state.get('options', {})
-        
-        if user_input in options:
-            choice = options[user_input]
-            
-            # Check if action is restart_user
-            if choice.get('action') == 'restart_user':
-                # Check if we're in a state that requires confirmation
-                if self.user_db.is_registered(phone_number) and state.get('id') != 'confirm_restart':
-                    # Move to confirmation state
-                    self.user_db.set_user_state(phone_number, 'confirm_restart', add_to_history=False)
-                    confirm_state = self.flow['states'].get('confirm_restart')
-                    if confirm_state:
-                        message = self._get_state_message(phone_number, confirm_state)
-                        buttons = self._build_buttons(confirm_state)
-                        return message, 'confirm_restart', buttons
-                # Not registered or already confirmed - restart immediately
-                return self._handle_restart(phone_number)
-            
-            # Save to profile if needed (check both state and choice for save_to)
-            save_to_key = choice.get('save_to') or state.get('save_to')
-            if save_to_key:
-                self.user_db.save_to_profile(phone_number, save_to_key, choice['value'])
-                logger.info(f"Saved {save_to_key} = '{choice['value']}' for {phone_number}")
-            
-            # Perform action if specified
-            if choice.get('action'):
-                # Handle special actions
-                if choice.get('action') == 'show_help_command':
-                    # Show help via command handler
-                    help_msg, help_buttons = self.command_handler.handle_show_help(phone_number)
-                    return help_msg, None, help_buttons
-                self.action_executor.execute(phone_number, choice['action'], choice)
-            
-            # Get next state
-            next_state = choice.get('next_state')
-            
-            # Check if choice has a custom message (response message for this choice)
-            choice_message = choice.get('message')
-            
-            # Get next state message and buttons
-            if next_state:
-                next_state_def = self.flow['states'].get(next_state)
-                next_state_message = self._get_state_message(phone_number, next_state_def)
-                buttons = self._build_buttons(next_state_def)
-                
-                # If choice has a custom message, combine it with next state message
-                # This allows showing both the response to the choice AND the next state message
-                if choice_message:
-                    # If next state has a message, combine them (choice message first, then next state)
-                    if next_state_message:
-                        # Combine messages: choice response + next state message
-                        message = f"{choice_message}\n\n{next_state_message}"
-                    else:
-                        # Next state is routing - use choice message and process routing
-                        message = choice_message
-                        # Process routing states recursively to get final state
-                        final_state = next_state_def
-                        while final_state and not final_state.get('message') and not final_state.get('expected_input'):
-                            final_next = self._get_next_state(phone_number, final_state, None)
-                            if final_next:
-                                final_state = self.flow['states'].get(final_next)
-                                if final_state:
-                                    next_state = final_next
-                                    next_state_def = final_state
-                                    next_state_message = self._get_state_message(phone_number, final_state)
-                                    buttons = self._build_buttons(final_state)
-                                    # If final state has message, combine with choice message
-                                    if next_state_message:
-                                        message = f"{choice_message}\n\n{next_state_message}"
-                                else:
-                                    break
-                            else:
-                                break
-                        # Update state to final state (likely idle)
-                        if next_state:
-                            self.user_db.set_user_state(phone_number, next_state, {'last_state': next_state}, add_to_history=True)
-                else:
-                    message = next_state_message
-            else:
-                # No next state - use choice message if available, otherwise default
-                message = choice_message if choice_message else "תודה!"
-                buttons = None
-            
-            return message, next_state, buttons
-        else:
-            # Invalid choice - provide clearer error message with context
-            options_list = list(state.get('options', {}).keys())
-            state_id = state.get('id', 'unknown')
-            
-            # Build helpful error message
-            if options_list:
-                # Show available options with labels
-                options_labels = []
-                for opt_id in options_list:
-                    opt_data = state.get('options', {}).get(opt_id, {})
-                    label = opt_data.get('label', opt_id)
-                    options_labels.append(f"{opt_id} ({label})")
-                
-                error_msg = f"❌ נראה שהקלדת טקסט במקום לבחור מספר.\n\n💡 אנא בחר אחת מהאפשרויות:\n" + "\n".join([f"• {opt}" for opt in options_labels])
-                
-                # Add context based on state
-                if 'user_type' in state_id:
-                    error_msg += "\n\n(פשוט הקש 1, 2 או 3) 👆"
-                elif 'when' in state_id or 'time' in state_id.lower():
-                    error_msg += "\n\n(פשוט הקש 1, 2, 3 או 4) 👆"
-                elif 'routine' in state_id:
-                    error_msg += "\n\n(פשוט הקש 1 או 2) 👆"
-                else:
-                    error_msg += "\n\n(פשוט הקש את המספר של האפשרות שברצונך לבחור) 👆"
-            else:
-                error_msg = "❌ בחירה לא חוקית. אנא בחר מהאפשרויות המוצגות."
-            
-            buttons = self._build_buttons(state)
-            return error_msg, None, buttons
-    
-    def _handle_text_input(self, phone_number: str, state: Dict[str, Any], user_input: str) -> Tuple[str, Optional[str]]:
-        """Handle text input with validation
-        
-        Returns tuple of (message, next_state)
-        """
-        state_id = state.get('id')
-        
-        # Check if user is responding to a previous suggestion
-        context = self.user_db.get_user_context(phone_number)
-        if context.get('pending_suggestions'):
-            suggestions = context.get('pending_suggestions')
-            
-            # Check if user clicked restart button
-            if user_input == 'restart_button':
-                self.user_db.update_context(phone_number, 'pending_suggestions', None)
-                # Call restart handler but return only 2 values for text input
-                restart_msg, restart_state, _ = self._handle_restart(phone_number)
-                return restart_msg, restart_state
-            
-            # Check if user selected by number (from button click)
-            if user_input.isdigit():
-                idx = int(user_input) - 1
-                if 0 <= idx < len(suggestions):
-                    # User selected a suggestion
-                    selected_value = suggestions[idx]
-                    # Clear pending suggestions
-                    self.user_db.update_context(phone_number, 'pending_suggestions', None)
-                    # Save the selected value
-                    if state.get('save_to'):
-                        self.user_db.save_to_profile(phone_number, state['save_to'], selected_value)
-                        logger.info(f"Saved {state['save_to']} = '{selected_value}' for {phone_number}")
-                    # Continue to next state
-                    next_state = state.get('next_state')
-                    if next_state:
-                        next_state_def = self.flow['states'].get(next_state)
-                        if next_state_def and not next_state_def.get('message') and not next_state_def.get('expected_input'):
-                            auto_next_state = self._get_next_state(phone_number, next_state_def, None)
-                            if auto_next_state:
-                                next_state_def = self.flow['states'].get(auto_next_state)
-                                next_state = auto_next_state
-                        message = self._get_state_message(phone_number, next_state_def) if next_state_def else "תודה!"
-                        return message, next_state
-            # Clear suggestions if user typed something else (new input)
-            self.user_db.update_context(phone_number, 'pending_suggestions', None)
-        
-        # Validation based on state
-        validation_result = self._validate_input(state_id, user_input)
-        
-        if not validation_result['is_valid']:
-            # Return error message with suggestions if available
-            error_msg = validation_result['error_message']
-            if validation_result.get('suggestions'):
-                suggestions = validation_result['suggestions']
-                # Save suggestions to context for interactive buttons
-                self.user_db.update_context(phone_number, 'pending_suggestions', suggestions)
-                # Only use "הישוב" message for settlement states, use original error message otherwise
-                if state_id in self.SETTLEMENT_STATES:
-                    error_msg = f"הישוב \"{user_input}\" לא נמצא במערכת. 🤔\n\n💡 התכוונת ל:\n"
-                # Note: suggestions will be shown as buttons, not text
-            else:
-                # Enhanced error messages with examples and context
-                error_msg = self.message_formatter.get_enhanced_error_message(state_id, state, user_input, error_msg)
-            
-            return error_msg, None
-        
-        # If validation passed, use normalized value
-        final_value = validation_result.get('normalized_value', user_input)
-        
-        # Save input to profile
-        if state.get('save_to'):
-            self.user_db.save_to_profile(phone_number, state['save_to'], final_value)
-            logger.info(f"Saved {state['save_to']} = '{final_value}' for {phone_number}")
-        
-        # Perform action if specified (but only if not already executed in next_state)
-        # Skip action here if next_state has the same action - it will be executed there
-        next_state = state.get('next_state')
-        next_state_def = self.flow['states'].get(next_state) if next_state else None
-        
-        if state.get('action'):
-            # Only execute if next_state doesn't have the same action
-            if not (next_state_def and next_state_def.get('action') == state.get('action')):
-                self.action_executor.execute(phone_number, state['action'], {'input': final_value})
-            else:
-                logger.debug(f"Skipping action '{state.get('action')}' - will be executed in next_state '{next_state}'")
-        
-        # Special handling: If registered user is updating name, return to show_my_info
-        if state_id == 'ask_full_name' and self.user_db.is_registered(phone_number):
-            # User is updating name, not registering - return to show_my_info
-            next_state = 'show_my_info'
-            next_state_def = self.flow['states'].get(next_state)
-            if next_state_def:
-                message = self._get_state_message(phone_number, next_state_def)
-                buttons = self._build_buttons(next_state_def)
-                return message, next_state
-        
-        # Get next state
-        next_state = state.get('next_state')
-        
-        if not next_state:
-            return "תודה! הפרטים נשמרו.", None
-        
-        # Get next state definition
-        next_state_def = self.flow['states'].get(next_state)
-        if not next_state_def:
-            return "תודה! הפרטים נשמרו.", None
-        
-        # Check if next state is a routing state (no message, no input)
-        if not next_state_def.get('message') and not next_state_def.get('expected_input'):
-            # Auto-advance through routing state
-            auto_next_state = self._get_next_state(phone_number, next_state_def, None)
-            if auto_next_state:
-                next_state_def = self.flow['states'].get(auto_next_state)
-                next_state = auto_next_state
-        
-        # Don't execute action here - it will be executed in _process_message when transitioning to next_state
-        # This prevents duplicate execution. The action is executed once in _process_message (line 161-162)
-        
-        # Get next state message
-        message = self._get_state_message(phone_number, next_state_def)
-        
-        return message, next_state
-    
+    # Removed _handle_choice_input and _handle_text_input - now using TextHandler and ChoiceHandler
+
     def _validate_input(self, state_id: str, user_input: str) -> Dict[str, Any]:
         """
         Validate user input based on state
@@ -875,12 +565,21 @@ class ConversationEngine:
         # Log restart event BEFORE clearing (so it's saved)
         self.user_logger.log_event(phone_number, 'restart', {'reason': 'user_requested'})
         
+        # Preserve WhatsApp name before deleting user data
+        # WhatsApp name comes from API/webhook, not user input, so we should keep it
+        whatsapp_name = self.user_db.get_profile_value(phone_number, 'whatsapp_name')
+        
         # Delete all user data to start fresh
         self.user_db.delete_user_data(phone_number)
         
         # Clear all context variables to ensure complete cleanup
         # Create a fresh user first to ensure user exists
         self.user_db.create_user(phone_number)
+        
+        # Restore WhatsApp name if it existed (it comes from WhatsApp API, not user input)
+        if whatsapp_name:
+            self.user_db.save_to_profile(phone_number, 'whatsapp_name', whatsapp_name)
+            logger.info(f"💾 Preserved WhatsApp name '{whatsapp_name}' for {phone_number} after restart")
         
         # Explicitly reset context to ensure no state leaks
         self.user_db.set_user_state(phone_number, 'initial', {})
@@ -889,19 +588,29 @@ class ConversationEngine:
         # If you want to delete logs on restart, uncomment the next line:
         # self.user_logger.clear_user_logs(phone_number)
         
-        # Get initial state and first actual state
-        initial_state = self.flow['states']['initial']
-        next_state = initial_state.get('next_state', 'ask_full_name')
+        # Process initial state - this will check for WhatsApp name and route accordingly
+        initial_state = self.flow['states'].get('initial')
+        if initial_state:
+            # Use _process_state to handle initial state routing (checks for WhatsApp name)
+            result = self._process_state(phone_number, initial_state, '')
+            if len(result) == 3:
+                message, next_state, buttons = result
+            else:
+                message, next_state = result
+                buttons = None
+            return message, next_state, buttons
+        
+        # Fallback to ask_full_name if initial state not found
+        next_state = 'ask_full_name'
         next_state_def = self.flow['states'].get(next_state)
+        if next_state_def:
+            message = self._get_state_message(phone_number, next_state_def)
+            buttons = self._build_buttons(next_state_def)
+            self.user_db.set_user_state(phone_number, next_state, {'last_state': next_state})
+            return message, next_state, buttons
         
-        # Build welcome message and buttons
-        message = self._get_state_message(phone_number, next_state_def)
-        buttons = self._build_buttons(next_state_def)
-        
-        # Set user to the first state
-        self.user_db.set_user_state(phone_number, next_state, {'last_state': next_state})
-        
-        return message, next_state, buttons
+        # Final fallback
+        return "היי! בואו נתחיל מחדש.", 'ask_full_name', None
     
     def _check_commands(self, phone_number: str, message_text: str):
         """Check if message is a special command
@@ -928,6 +637,10 @@ class ConversationEngine:
             
             elif command == 'show_menu':
                 return self.command_handler.handle_show_menu(phone_number)
+        
+        # Check for "מצאתי" command (not in commands dict, but special handling)
+        if message_text.strip() == 'מצאתי':
+            return self.command_handler.handle_found_ride(phone_number)
         
         return None
     

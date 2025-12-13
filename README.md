@@ -118,6 +118,53 @@ python src/app.py
 
 ---
 
+## ☁️ פריסה ל-Google Cloud Run
+
+הפרויקט כולל תמיכה מלאה בפריסה ל-Google Cloud Run באמצעות Docker.
+
+### פריסה מהירה
+
+```bash
+# הגדר משתני סביבה
+export WHATSAPP_PHONE_NUMBER_ID=your_phone_number_id
+export WHATSAPP_ACCESS_TOKEN=your_access_token
+export WEBHOOK_VERIFY_TOKEN=your_verify_token
+export MONGODB_URI=your_mongodb_uri
+
+# הפעל סקריפט הפריסה
+./scripts/deploy_cloud_run.sh [region] [project_id]
+```
+
+### בדיקה מקומית עם Docker
+
+```bash
+# בניית תמונת Docker
+docker build -t hiker-bot .
+
+# הרצה מקומית
+docker run -p 8080:8080 \
+  -e WHATSAPP_PHONE_NUMBER_ID=your_phone_number_id \
+  -e WHATSAPP_ACCESS_TOKEN=your_access_token \
+  -e WEBHOOK_VERIFY_TOKEN=your_verify_token \
+  -e MONGODB_URI=your_mongodb_uri \
+  hiker-bot
+```
+
+📖 **מדריך מפורט**: ראה [docs/CLOUD_RUN_DEPLOYMENT.md](docs/CLOUD_RUN_DEPLOYMENT.md) לפרטים מלאים.
+
+### אינטגרציה עם GitHub (CI/CD)
+
+להגדרת פריסה אוטומטית מ-GitHub ל-Cloud Run:
+
+```bash
+# הגדרת טריגר אוטומטי
+./scripts/setup_github_cloud_build.sh [project_id] [region] [github_owner] [repo_name] [branch]
+```
+
+📖 **מדריך מפורט**: ראה [docs/GITHUB_CLOUD_BUILD_SETUP.md](docs/GITHUB_CLOUD_BUILD_SETUP.md)
+
+---
+
 ## 🏗️ מבנה הפרויקט
 
 ```

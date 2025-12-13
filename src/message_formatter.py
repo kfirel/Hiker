@@ -44,9 +44,26 @@ class MessageFormatter:
             return ""
         
         message = state.get('message', '')
+        original_message = message  # Keep original for cleanup checks
         
         # Substitute variables from user profile
-        profile = self.user_db.get_user(phone_number).get('profile', {})
+        user = self.user_db.get_user(phone_number)
+        profile = user.get('profile', {}) if user else {}
+        
+        # Get raw MongoDB user if available (for fields not in converted format)
+        mongo_user_raw = None
+        if hasattr(self.user_db, '_use_mongo') and self.user_db._use_mongo and self.user_db.mongo:
+            try:
+                mongo_user_raw = self.user_db.mongo.get_collection("users").find_one({"phone_number": phone_number})
+            except Exception as e:
+                logger.debug(f"Could not fetch raw MongoDB user: {e}")
+        
+        # Get WhatsApp name value first (for cleanup later)
+        whatsapp_name_value = None
+        if user:
+            whatsapp_name_value = profile.get('whatsapp_name') or user.get('whatsapp_name') or ''
+        elif mongo_user_raw:
+            whatsapp_name_value = mongo_user_raw.get('whatsapp_name') or ''
         
         # Find all {variable} patterns
         variables = re.findall(r'\{(\w+)\}', message)
@@ -54,12 +71,40 @@ class MessageFormatter:
             # Special handling for name variables - use WhatsApp name as fallback
             if var in ['full_name', 'name']:
                 value = profile.get('full_name') or profile.get('whatsapp_name') or 'חבר/ה'
+                if not value and mongo_user_raw:
+                    value = mongo_user_raw.get('full_name') or mongo_user_raw.get('whatsapp_name') or 'חבר/ה'
+            elif var == 'whatsapp_name':
+                # Use the value we already got, fallback to full_name or generic greeting
+                value = whatsapp_name_value or profile.get('full_name') or 'חבר/ה'
+                if not value and mongo_user_raw:
+                    value = mongo_user_raw.get('whatsapp_name') or mongo_user_raw.get('full_name') or 'חבר/ה'
             elif var == 'user_summary':
                 # Special variable for user summary
                 value = self.get_user_summary(phone_number)
             else:
-                value = profile.get(var, f'[{var}]')
+                # Check profile first
+                value = profile.get(var)
+                # Then check user document root level (for JSON mode)
+                if value is None and user:
+                    value = user.get(var)
+                # Finally check raw MongoDB user (for MongoDB-stored fields like routine_destination)
+                if value is None and mongo_user_raw:
+                    value = mongo_user_raw.get(var)
+                if value is None:
+                    value = f'[{var}]'
             message = message.replace(f'{{{var}}}', str(value))
+        
+        # Clean up empty WhatsApp name references in messages
+        # Handle cases where {whatsapp_name} was empty - clean up spacing
+        if '{whatsapp_name}' in original_message and not whatsapp_name_value:
+            # Pattern: "היי{whatsapp_name}!" becomes "היי!" if whatsapp_name is empty
+            # Pattern: "היי {whatsapp_name}!" becomes "היי!" if whatsapp_name is empty
+            message = re.sub(r'היי\s*\{whatsapp_name\}\s*!', 'היי!', message)
+            message = re.sub(r'היי\s*\{whatsapp_name\}\s*👋', 'היי 👋', message)
+            message = re.sub(r'היי\s*\{whatsapp_name\}', 'היי', message)
+            # Also handle cases where name appears in middle: "היי {whatsapp_name}!"
+            message = re.sub(r'היי\s+!', 'היי!', message)
+            message = re.sub(r'היי\s+👋', 'היי 👋', message)
         
         return message
     
@@ -123,15 +168,20 @@ class MessageFormatter:
             summary_parts.append("🔄 שגרות נסיעה:")
             for idx, routine in enumerate(routines, 1):
                 dest = routine.get('destination', '')
-                days = routine.get('days', '')
+                days = routine.get('days', [])
+                # Handle both array and string formats (backward compatibility)
+                if isinstance(days, list):
+                    days_str = ', '.join(days) if days else ''
+                else:
+                    days_str = str(days) if days else ''
                 dep_start = routine.get('departure_time_start')
                 dep_end = routine.get('departure_time_end')
                 ret_start = routine.get('return_time_start')
                 ret_end = routine.get('return_time_end')
                 
                 routine_str = f"   {idx}. {dest}"
-                if days:
-                    routine_str += f" ({days})"
+                if days_str:
+                    routine_str += f" ({days_str})"
                 
                 if dep_start and dep_end:
                     if isinstance(dep_start, datetime):

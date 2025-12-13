@@ -23,6 +23,8 @@ from freezegun import freeze_time
 from tests.integration_report_generator import IntegrationReportGenerator
 from tests.conftest import integration_conversation_engine, mock_mongo_client, mongo_db
 from tests.mock_whatsapp_client import MockWhatsAppClient
+from src.utils.button_parser import ButtonParser
+from src.handlers.match_response_handler import MatchResponseHandler
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +37,9 @@ class UnifiedScenarioTester:
         self.mongo_db = mongo_db
         self.whatsapp_client = whatsapp_client
         self.user_logger = engine.user_logger if hasattr(engine, 'user_logger') else None
+        self.button_parser = ButtonParser()
+        # Initialize match response handler for tests
+        self.match_response_handler = MatchResponseHandler(mongo_db, whatsapp_client, self.user_logger)
         self.scenario_data = {
             'users': {},
             'conversations': [],
@@ -228,12 +233,10 @@ class UnifiedScenarioTester:
             self.whatsapp_client.clear_messages()
             
             # Handle special cases (approval/rejection, name sharing)
-            if message.startswith('share_name_yes_') or message.startswith('share_name_no_'):
+            if self.button_parser.is_name_sharing(message):
                 return self._handle_name_sharing(phone, message, user_id)
             
-            if (message.startswith('approve_') or message.startswith('reject_') or
-                message.startswith('1_') or message.startswith('2_') or
-                message in ['1', '2']):
+            if self.button_parser.is_match_response(message) or message in ['1', '2']:
                 return self._handle_match_response(phone, message, user_id)
             
             # Process message through conversation engine
@@ -260,18 +263,35 @@ class UnifiedScenarioTester:
             user_doc = self.mongo_db.mongo.get_collection("users").find_one({"phone_number": phone})
             if user_doc:
                 user_id = user_doc.get('_id')
-                # Find matches where this user is the hitchhiker
-                hitchhiker_matches = list(self.mongo_db.mongo.get_collection("matches").find({
-                    "hitchhiker_id": user_id
+                # Find matches where this user is the hitchhiker (from ride_requests.matched_drivers)
+                hitchhiker_requests = list(self.mongo_db.mongo.get_collection("ride_requests").find({
+                    "requester_id": user_id
                 }))
-                # Find matches where this user is the driver
-                driver_matches = list(self.mongo_db.mongo.get_collection("matches").find({
-                    "driver_id": user_id
+                hitchhiker_matches = []
+                for req in hitchhiker_requests:
+                    for md in req.get('matched_drivers', []):
+                        match_dict = md.copy()
+                        match_dict['ride_request_id'] = req['_id']
+                        match_dict['hitchhiker_id'] = user_id
+                        hitchhiker_matches.append(match_dict)
+                
+                # Find matches where this user is the driver (from ride_requests.matched_drivers)
+                driver_requests = list(self.mongo_db.mongo.get_collection("ride_requests").find({
+                    "matched_drivers.driver_id": user_id
                 }))
+                driver_matches = []
+                for req in driver_requests:
+                    for md in req.get('matched_drivers', []):
+                        if str(md.get('driver_id')) == str(user_id):
+                            match_dict = md.copy()
+                            match_dict['ride_request_id'] = req['_id']
+                            match_dict['hitchhiker_id'] = req.get('requester_id')
+                            driver_matches.append(match_dict)
+                
                 # Add all matches (avoid duplicates by match_id)
                 existing_match_ids = {m.get('match_id') or str(m.get('_id', '')) for m in self.scenario_data['matches']}
                 for match in hitchhiker_matches + driver_matches:
-                    match_id = match.get('match_id') or str(match.get('_id', ''))
+                    match_id = match.get('match_id', '')
                     if match_id and match_id not in existing_match_ids:
                         self.scenario_data['matches'].append(match)
                         existing_match_ids.add(match_id)
@@ -427,49 +447,44 @@ class UnifiedScenarioTester:
         return interaction, notification_interactions
     
     def _handle_match_response(self, phone: str, message: str, user_id: str) -> Optional[Tuple]:
-        """Handle match approval/rejection response"""
-        # Extract match_id and is_approval (same logic as test_integration_flows.py)
-        if message.startswith('approve_'):
-            match_id = message.replace('approve_', '')
-            is_approval = True
-        elif message.startswith('reject_'):
-            match_id = message.replace('reject_', '')
-            is_approval = False
-        elif message.startswith('1_'):
-            match_id = message.replace('1_', '')
-            is_approval = True
-        elif message.startswith('2_'):
-            match_id = message.replace('2_', '')
-            is_approval = False
-        elif message == '1':
-            match_id = None
-            is_approval = True
-        elif message == '2':
-            match_id = None
-            is_approval = False
-        else:
-            logger.error(f"Invalid button ID format: {message}")
-            return None
+        """Handle match approval/rejection response using MatchResponseHandler"""
+        # Parse button ID to get match_id and is_approval
+        match_id, is_approval = self.button_parser.parse_match_response(message)
         
-        if match_id is None or match_id == 'MATCH_' or message in ['1', '2']:
+        # Check for auto-approved matches first (test-specific logic)
+        if message in ['1', '2']:
             driver = self.mongo_db.mongo.get_collection("users").find_one({"phone_number": phone})
             if driver:
-                auto_approved_match = self.mongo_db.mongo.get_collection("matches").find_one({
-                    "driver_id": driver['_id'],
-                    "is_auto_approval": True,
-                    "status": "approved"
-                })
-                if auto_approved_match:
+                # Find auto-approved matches in ride_requests.matched_drivers
+                ride_requests = list(self.mongo_db.mongo.get_collection("ride_requests").find({
+                    "matched_drivers.driver_id": driver['_id'],
+                    "matched_drivers.status": "approved",
+                    "matched_drivers.is_auto_approval": True
+                }))
+                if ride_requests:
                     return None
-                
-                matches = list(self.mongo_db.mongo.get_collection("matches").find({
-                    "driver_id": driver['_id'],
-                    "status": "pending_approval",
-                    "notification_sent_to_driver": True
-                }).sort("matched_at", -1).limit(1))
-                if matches:
-                    match_id = matches[0].get('match_id', '')
+        
+        # If match_id is None or invalid, try to find from database
+        if not match_id or match_id == 'MATCH_':
+            driver = self.mongo_db.mongo.get_collection("users").find_one({"phone_number": phone})
+            if driver:
+                # Find pending matches in ride_requests.matched_drivers
+                ride_requests = list(self.mongo_db.mongo.get_collection("ride_requests").find({
+                    "matched_drivers.driver_id": driver['_id'],
+                    "matched_drivers.status": "pending_approval",
+                    "matched_drivers.notification_sent_to_driver": True
+                }).sort("created_at", -1).limit(1))
+                if ride_requests:
+                    # Get the most recent matched driver entry
+                    for md in sorted(ride_requests[0].get('matched_drivers', []), 
+                                   key=lambda x: x.get('matched_at', ''), reverse=True):
+                        if (str(md.get('driver_id')) == str(driver['_id']) and 
+                            md.get('status') == 'pending_approval' and 
+                            md.get('notification_sent_to_driver')):
+                            match_id = md.get('match_id', '')
+                            break
                 elif message in ['1', '2']:
+                    # If no match found and message is '1' or '2', process as regular message
                     bot_response, buttons = self.engine.process_message(phone, message)
                     if bot_response:
                         current_state = self.engine.user_db.get_user_state(phone) if self.engine.user_db.user_exists(phone) else None
@@ -489,14 +504,14 @@ class UnifiedScenarioTester:
                         return interaction, []
                     return None
         
-        if match_id:
-            from src.services.approval_service import ApprovalService
-            approval_service = ApprovalService(self.mongo_db.mongo, self.whatsapp_client, self.user_logger)
-            if is_approval:
-                approval_service.driver_approve(phone, match_id)
-            else:
-                approval_service.driver_reject(phone, match_id)
+        # Use the handler to process the match response
+        if match_id and is_approval is not None:
+            success = self.match_response_handler.handle(phone, message)
             
+            if not success:
+                return None
+            
+            # Get sent messages for test reporting
             sent_messages = self.whatsapp_client.get_sent_messages()
             bot_response = None
             buttons = None
@@ -506,6 +521,7 @@ class UnifiedScenarioTester:
                     buttons = sent_msg.get('buttons')
                     break
             
+            # Collect notifications sent to other users (hitchhikers)
             notifications = []
             notification_interactions = []
             for sent_msg in sent_messages:
@@ -553,10 +569,13 @@ class UnifiedScenarioTester:
             context = driver.get('state', {}).get('context', {})
             pending_match_id = context.get('pending_name_share_match_id') or driver.get('pending_name_share_match_id')
             if pending_match_id:
-                if message.startswith('share_name_yes_'):
-                    return f'share_name_yes_{pending_match_id}'
-                elif message.startswith('share_name_no_'):
-                    return f'share_name_no_{pending_match_id}'
+                # Use button parser to check format
+                if self.button_parser.is_name_sharing(message):
+                    match_id, share_name = self.button_parser.parse_name_sharing(message)
+                    if not match_id or match_id == 'MATCH_':
+                        # Replace with actual match_id
+                        choice = 'yes' if share_name else 'no'
+                        return f'share_name_{choice}_{pending_match_id}'
         return message
     
     def _take_db_snapshot(self) -> Dict[str, Any]:
@@ -564,7 +583,14 @@ class UnifiedScenarioTester:
         users = list(self.mongo_db.mongo.get_collection("users").find())
         routines = list(self.mongo_db.mongo.get_collection("routines").find())
         ride_requests = list(self.mongo_db.mongo.get_collection("ride_requests").find())
-        matches = list(self.mongo_db.mongo.get_collection("matches").find())
+        # Extract matches from ride_requests.matched_drivers
+        matches = []
+        for req in ride_requests:
+            for md in req.get('matched_drivers', []):
+                match_dict = md.copy()
+                match_dict['ride_request_id'] = req['_id']
+                match_dict['hitchhiker_id'] = req.get('requester_id')
+                matches.append(match_dict)
         
         return {
             'users': [self._serialize_user(u) for u in users],
@@ -722,8 +748,8 @@ def test_all_unified_scenarios(unified_tester, integration_conversation_engine, 
             mongo_db.mongo.get_collection("users").delete_many({})
             mongo_db.mongo.get_collection("routines").delete_many({})
             mongo_db.mongo.get_collection("ride_requests").delete_many({})
-            mongo_db.mongo.get_collection("matches").delete_many({})
-            mongo_db.mongo.get_collection("notifications").delete_many({})
+            # Matches are now stored in ride_requests.matched_drivers, cleared when ride_requests are deleted
+            # Notifications collection removed, no need to delete
         
         # Clear WhatsApp client
         unified_tester.whatsapp_client.clear_messages()

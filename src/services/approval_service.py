@@ -7,6 +7,8 @@ from typing import Dict, Any, Optional
 import logging
 from bson import ObjectId
 
+from src.utils.preference_helper import PreferenceHelper
+
 logger = logging.getLogger(__name__)
 
 
@@ -31,83 +33,78 @@ class ApprovalService:
         Driver approves a match
         
         Args:
-            match_id: Match ID
+            match_id: Match ID (from matched_drivers array)
             driver_phone: Driver's phone number
             is_auto_approval: If True, this is an automatic approval (driver won't receive confirmation message)
             
         Returns:
             True if successful
         """
-        match = self.db.get_collection("matches").find_one({"match_id": match_id})
-        if not match:
+        # Find ride request with this match_id in matched_drivers array
+        ride_request = self.db.get_collection("ride_requests").find_one({
+            "matched_drivers.match_id": match_id
+        })
+        
+        if not ride_request:
             logger.error(f"Match not found: {match_id}")
+            return False
+        
+        # Find the matched driver entry
+        matched_driver = None
+        for md in ride_request.get('matched_drivers', []):
+            if md.get('match_id') == match_id:
+                matched_driver = md
+                break
+        
+        if not matched_driver:
+            logger.error(f"Matched driver entry not found: {match_id}")
             return False
         
         # Verify driver
         driver = self.db.get_collection("users").find_one({"phone_number": driver_phone})
-        if not driver or str(driver['_id']) != str(match['driver_id']):
+        if not driver or str(driver['_id']) != str(matched_driver['driver_id']):
             logger.error(f"Driver verification failed for match {match_id}")
             return False
         
-        # Update match
+        # Update matched_driver entry in ride_request
         update_data = {
-            "status": "approved",
-            "driver_response": "approved",
-            "driver_response_at": datetime.now(),
+            "matched_drivers.$.status": "approved",
+            "matched_drivers.$.driver_response": "approved",
+            "matched_drivers.$.driver_response_at": datetime.now(),
             "updated_at": datetime.now()
         }
         
-        # Store is_auto_approval flag so we know not to send confirmation message to driver
+        # Store is_auto_approval flag
         if is_auto_approval:
-            update_data["is_auto_approval"] = True
+            update_data["matched_drivers.$.is_auto_approval"] = True
         
-        self.db.get_collection("matches").update_one(
-            {"match_id": match_id},
+        self.db.get_collection("ride_requests").update_one(
+            {"_id": ride_request['_id'], "matched_drivers.match_id": match_id},
             {"$set": update_data}
         )
         
-        # Update ride request
-        ride_request = self.db.get_collection("ride_requests").find_one({"_id": match['ride_request_id']})
         if ride_request:
+            # Update ride request status to approved (but don't reject other matches)
+            # This allows multiple drivers to approve the same request
             self.db.get_collection("ride_requests").update_one(
-                {"_id": match['ride_request_id']},
+                {"_id": ride_request['_id']},
                 {
                     "$set": {
                         "status": "approved",
-                        "approved_driver_id": match['driver_id'],
-                        "approved_at": datetime.now(),
                         "updated_at": datetime.now()
                     }
                 }
             )
             
-            # Reject other pending matches for this request
-            self.db.get_collection("matches").update_many(
-                {
-                    "ride_request_id": match['ride_request_id'],
-                    "match_id": {"$ne": match_id},
-                    "status": "pending_approval"
-                },
-                {
-                    "$set": {
-                        "status": "rejected",
-                        "driver_response": "rejected",
-                        "updated_at": datetime.now()
-                    }
-                }
-            )
+            # Don't reject other pending matches - allow multiple drivers to approve
+            # Each driver can independently approve or reject
             
             # Check driver's preference for sharing name
-            # save_to_profile saves directly to root level of user document in MongoDB
-            # But get_user returns it nested in 'profile' dict, so check both places
-            share_name_preference = driver.get('share_name_with_hitchhiker')
-            if not share_name_preference:
-                # Check in profile dict (as returned by get_user)
-                profile = driver.get('profile', {})
-                share_name_preference = profile.get('share_name_with_hitchhiker')
-            # Default to 'always' for backward compatibility
-            if not share_name_preference:
-                share_name_preference = 'always'
+            share_name_preference = PreferenceHelper.get_share_name_preference(driver)
+            # Default to 'always' for backward compatibility (if not set)
+            if not share_name_preference or share_name_preference == 'ask':
+                # For approval flow, default to 'always' if not set
+                share_name_preference = 'always' if share_name_preference != 'ask' else 'ask'
             
             logger.info(f"Driver {driver_phone} share_name_preference: {share_name_preference}")
             
@@ -115,12 +112,26 @@ class ApprovalService:
             if self.whatsapp_client:
                 if share_name_preference == 'ask':
                     # Ask driver first before notifying hitchhiker
-                    self._ask_driver_about_name_sharing(match_id, driver_phone, match, ride_request)
+                    # Create match-like dict for compatibility
+                    match_dict = {
+                        'match_id': match_id,
+                        'driver_id': matched_driver['driver_id'],
+                        'hitchhiker_id': ride_request['requester_id'],
+                        'ride_request_id': ride_request['_id']
+                    }
+                    self._ask_driver_about_name_sharing(match_id, driver_phone, match_dict, ride_request)
                     # Don't send confirmation message yet - wait for driver's response
                     return True
                 else:
                     # Notify hitchhiker immediately (with or without name based on preference)
-                    self._notify_hitchhiker_approved(match, driver, ride_request, match_id)
+                    # Create match-like dict for compatibility
+                    match_dict = {
+                        'match_id': match_id,
+                        'driver_id': matched_driver['driver_id'],
+                        'hitchhiker_id': ride_request['requester_id'],
+                        'ride_request_id': ride_request['_id']
+                    }
+                    self._notify_hitchhiker_approved(match_dict, driver, ride_request, match_id)
         
         logger.info(f"Match {match_id} approved by driver {driver_phone}")
         return True
@@ -130,31 +141,46 @@ class ApprovalService:
         Driver rejects a match
         
         Args:
-            match_id: Match ID
+            match_id: Match ID (from matched_drivers array)
             driver_phone: Driver's phone number
             
         Returns:
             True if successful
         """
-        match = self.db.get_collection("matches").find_one({"match_id": match_id})
-        if not match:
+        # Find ride request with this match_id in matched_drivers array
+        ride_request = self.db.get_collection("ride_requests").find_one({
+            "matched_drivers.match_id": match_id
+        })
+        
+        if not ride_request:
             logger.error(f"Match not found: {match_id}")
+            return False
+        
+        # Find the matched driver entry
+        matched_driver = None
+        for md in ride_request.get('matched_drivers', []):
+            if md.get('match_id') == match_id:
+                matched_driver = md
+                break
+        
+        if not matched_driver:
+            logger.error(f"Matched driver entry not found: {match_id}")
             return False
         
         # Verify driver
         driver = self.db.get_collection("users").find_one({"phone_number": driver_phone})
-        if not driver or str(driver['_id']) != str(match['driver_id']):
+        if not driver or str(driver['_id']) != str(matched_driver['driver_id']):
             logger.error(f"Driver verification failed for match {match_id}")
             return False
         
-        # Update match
-        self.db.get_collection("matches").update_one(
-            {"match_id": match_id},
+        # Update matched_driver entry in ride_request
+        self.db.get_collection("ride_requests").update_one(
+            {"_id": ride_request['_id'], "matched_drivers.match_id": match_id},
             {
                 "$set": {
-                    "status": "rejected",
-                    "driver_response": "rejected",
-                    "driver_response_at": datetime.now(),
+                    "matched_drivers.$.status": "rejected",
+                    "matched_drivers.$.driver_response": "rejected",
+                    "matched_drivers.$.driver_response_at": datetime.now(),
                     "updated_at": datetime.now()
                 }
             }
@@ -173,7 +199,7 @@ class ApprovalService:
         if not hitchhiker:
             return
         
-        hitchhiker_name = hitchhiker.get('full_name') or hitchhiker.get('whatsapp_name') or 'טרמפיסט'
+        hitchhiker_name = PreferenceHelper.get_hitchhiker_name(hitchhiker)
         destination = ride_request.get('destination', 'יעד')
         
         # Store match_id in driver's context for later processing
@@ -238,14 +264,19 @@ class ApprovalService:
             if driver:
                 context = driver.get('context', {})
                 match_id = context.get('pending_name_share_match_id')
-                if not match_id:
-                    # Try to find most recent pending match
-                    matches = list(self.db.get_collection("matches").find({
-                        "driver_id": driver['_id'],
-                        "status": "pending_approval"
-                    }).sort("matched_at", -1).limit(1))
-                    if matches:
-                        match_id = matches[0].get('match_id', '')
+            if not match_id:
+                # Try to find most recent pending match from ride_requests
+                driver = self.db.get_collection("users").find_one({"phone_number": driver_phone})
+                if driver:
+                    ride_requests = list(self.db.get_collection("ride_requests").find({
+                        "matched_drivers.driver_id": driver['_id'],
+                        "matched_drivers.status": "pending_approval"
+                    }).sort("created_at", -1).limit(1))
+                    if ride_requests:
+                        for md in ride_requests[0].get('matched_drivers', []):
+                            if str(md.get('driver_id')) == str(driver['_id']) and md.get('status') == 'pending_approval':
+                                match_id = md.get('match_id')
+                                break
             
             if not match_id:
                 logger.error(f"Could not find match_id for driver {driver_phone}")
@@ -256,9 +287,12 @@ class ApprovalService:
                     )
                 return False
         
-        # Get match and driver
-        match = self.db.get_collection("matches").find_one({"match_id": match_id})
-        if not match:
+        # Find ride request with this match_id
+        ride_request = self.db.get_collection("ride_requests").find_one({
+            "matched_drivers.match_id": match_id
+        })
+        
+        if not ride_request:
             logger.error(f"Match not found: {match_id}")
             if self.whatsapp_client:
                 self.whatsapp_client.send_message(
@@ -267,8 +301,19 @@ class ApprovalService:
                 )
             return False
         
+        # Find matched driver entry
+        matched_driver = None
+        for md in ride_request.get('matched_drivers', []):
+            if md.get('match_id') == match_id:
+                matched_driver = md
+                break
+        
+        if not matched_driver:
+            logger.error(f"Matched driver entry not found: {match_id}")
+            return False
+        
         driver = self.db.get_collection("users").find_one({"phone_number": driver_phone})
-        if not driver or str(driver['_id']) != str(match['driver_id']):
+        if not driver or str(driver['_id']) != str(matched_driver['driver_id']):
             logger.error(f"Driver verification failed for match {match_id}")
             if self.whatsapp_client:
                 self.whatsapp_client.send_message(
@@ -283,33 +328,31 @@ class ApprovalService:
             {"$unset": {"pending_name_share_match_id": ""}}
         )
         
-        # Get ride request
-        ride_request = self.db.get_collection("ride_requests").find_one({"_id": match['ride_request_id']})
-        if not ride_request:
-            logger.error(f"Ride request not found: {match['ride_request_id']}")
-            return False
-        
         # Notify hitchhiker with or without name based on driver's choice
         # Get hitchhiker and destination info for the message
-        hitchhiker = self.db.get_collection("users").find_one({"_id": match['hitchhiker_id']})
-        hitchhiker_name = "טרמפיסט"
-        destination = "יעד"
-        if hitchhiker:
-            hitchhiker_name = hitchhiker.get('full_name') or hitchhiker.get('whatsapp_name') or 'טרמפיסט'
-        if ride_request:
-            destination = ride_request.get('destination', 'יעד')
+        hitchhiker = self.db.get_collection("users").find_one({"_id": ride_request['requester_id']})
+        hitchhiker_name = PreferenceHelper.get_hitchhiker_name(hitchhiker)
+        destination = ride_request.get('destination', 'יעד') if ride_request else 'יעד'
+        
+        # Create match-like dict for compatibility
+        match_dict = {
+            'match_id': match_id,
+            'driver_id': matched_driver['driver_id'],
+            'hitchhiker_id': ride_request['requester_id'],
+            'ride_request_id': ride_request['_id']
+        }
         
         if share_name:
             # Create temporary driver dict with name (ensure preference is 'always')
             driver_with_name = driver.copy()
             driver_with_name['share_name_with_hitchhiker'] = 'always'
-            self._notify_hitchhiker_approved(match, driver_with_name, ride_request, match_id)
+            self._notify_hitchhiker_approved(match_dict, driver_with_name, ride_request, match_id)
             confirmation = f"✅ אישרת את הבקשה!\n\nפרטי הקשר שלך (שם וטלפון) נשלחו לטרמפיסט {hitchhiker_name} (ל-{destination}).\nהוא יצור איתך קשר בקרוב כדי לתאם את הפרטים! 📲"
         else:
             # Create temporary driver dict without name (set preference to 'never')
             driver_without_name = driver.copy()
             driver_without_name['share_name_with_hitchhiker'] = 'never'
-            self._notify_hitchhiker_approved(match, driver_without_name, ride_request, match_id)
+            self._notify_hitchhiker_approved(match_dict, driver_without_name, ride_request, match_id)
             confirmation = f"✅ אישרת את הבקשה!\n\nמספר הטלפון שלך נשלח לטרמפיסט {hitchhiker_name} (ל-{destination}).\nהוא יצור איתך קשר בקרוב כדי לתאם את הפרטים! 📲"
         
         self.whatsapp_client.send_message(driver_phone, confirmation)
@@ -317,12 +360,42 @@ class ApprovalService:
     
     def _notify_hitchhiker_approved(self, match: Dict[str, Any], driver: Dict[str, Any], 
                                     ride_request: Dict[str, Any], match_id: str = None):
-        """Send approval notification to hitchhiker with driver contact details"""
+        """
+        Send approval notification to hitchhiker with driver contact details.
+        If multiple drivers have approved, send all of them in one message.
+        """
+        # Check if ride request was already marked as "found" - don't send notifications
+        if ride_request.get('status') == 'found':
+            logger.info(f"Ride request {ride_request['_id']} already marked as found, skipping approval notification")
+            return
+        
         hitchhiker = self.db.get_collection("users").find_one({"_id": match['hitchhiker_id']})
         if not hitchhiker or not self.whatsapp_client:
             return
         
-        driver_phone = driver.get('phone_number', '')
+        # Get fresh ride_request to get latest matched_drivers
+        ride_request = self.db.get_collection("ride_requests").find_one({"_id": ride_request['_id']})
+        if not ride_request:
+            logger.error(f"Ride request not found: {ride_request['_id']}")
+            return
+        
+        # Find all approved matched drivers from matched_drivers array
+        matched_drivers = ride_request.get('matched_drivers', [])
+        approved_drivers = []
+        
+        for matched_driver_entry in matched_drivers:
+            if matched_driver_entry.get('status') == 'approved':
+                approved_driver = self.db.get_collection("users").find_one({"_id": matched_driver_entry['driver_id']})
+                if approved_driver:
+                    approved_drivers.append({
+                        'driver': approved_driver,
+                        'match': matched_driver_entry  # Use matched_driver_entry as match dict
+                    })
+        
+        if not approved_drivers:
+            logger.warning(f"No approved drivers found for ride request {ride_request['_id']}")
+            return
+        
         destination = ride_request.get('destination', 'יעד')
         
         # Format time range for display
@@ -333,22 +406,20 @@ class ApprovalService:
         else:
             time_info = 'גמיש'
         
-        # Check driver's preference for sharing name
-        # save_to_profile saves directly to root level of user document in MongoDB
-        # But get_user returns it nested in 'profile' dict, so check both places
-        share_name_preference = driver.get('share_name_with_hitchhiker')
-        if not share_name_preference:
-            # Check in profile dict (as returned by get_user)
-            profile = driver.get('profile', {})
-            share_name_preference = profile.get('share_name_with_hitchhiker')
-        # Default to 'always' for backward compatibility
-        if not share_name_preference:
-            share_name_preference = 'always'
-        
-        # Build message based on preference
-        if share_name_preference == 'never':
-            # Don't send driver name - only phone number
-            message = f"""🎉 מעולה! נהג מצא אותך מתאים!
+        # Build message with all approved drivers
+        if len(approved_drivers) == 1:
+            # Single driver - simple message
+            driver_info = approved_drivers[0]
+            driver = driver_info['driver']
+            driver_phone = driver.get('phone_number', '')
+            
+            # Check driver's preference for sharing name
+            share_name_preference = PreferenceHelper.get_share_name_preference(driver)
+            if not share_name_preference or share_name_preference == 'ask':
+                share_name_preference = 'always' if share_name_preference != 'ask' else 'ask'
+            
+            if share_name_preference == 'never':
+                message = f"""🎉 מעולה! נהג מצא אותך מתאים!
 
 👤 פרטי הנהג:
 📱 טלפון: {driver_phone}
@@ -356,11 +427,12 @@ class ApprovalService:
 ⏰ זמן יציאה משוער: {time_info}
 (הנהג יצא מגברעם בטווח השעות הזה)
 
-תוכל ליצור איתו קשר עכשיו כדי לתאם את הפרטים המדויקים! 📲"""
-        else:  # 'always' or default (should not be 'ask' here as it's handled separately)
-            # Send driver name immediately
-            driver_name = driver.get('full_name') or driver.get('whatsapp_name') or 'נהג'
-            message = f"""🎉 מעולה! נהג מצא אותך מתאים!
+תוכל ליצור איתו קשר עכשיו כדי לתאם את הפרטים המדויקים! 📲
+
+אם מצאת טרמפ שלח ״מצאתי״ כדי שאפסיק לשלוח לך שמות של נהגים."""
+            else:
+                driver_name = PreferenceHelper.get_driver_name(driver)
+                message = f"""🎉 מעולה! נהג מצא אותך מתאים!
 
 👤 פרטי הנהג:
 🚗 שם: {driver_name}
@@ -369,37 +441,89 @@ class ApprovalService:
 ⏰ זמן יציאה משוער: {time_info}
 (הנהג יצא מגברעם בטווח השעות הזה)
 
-תוכל ליצור איתו קשר עכשיו כדי לתאם את הפרטים המדויקים! 📲"""
+תוכל ליצור איתו קשר עכשיו כדי לתאם את הפרטים המדויקים! 📲
+
+אם מצאת טרמפ שלח ״מצאתי״ כדי שאפסיק לשלוח לך שמות של נהגים."""
+        else:
+            # Multiple drivers - send all of them
+            message = f"""🎉 מעולה! {len(approved_drivers)} נהגים מצאו אותך מתאים!
+
+👥 פרטי הנהגים:
+
+"""
+            
+            for i, driver_info in enumerate(approved_drivers, 1):
+                driver = driver_info['driver']
+                driver_phone = driver.get('phone_number', '')
+                
+                # Check driver's preference for sharing name
+                share_name_preference = PreferenceHelper.get_share_name_preference(driver)
+                if not share_name_preference or share_name_preference == 'ask':
+                    share_name_preference = 'always' if share_name_preference != 'ask' else 'ask'
+                
+                if share_name_preference == 'never':
+                    message += f"""🚗 נהג #{i}:
+📱 טלפון: {driver_phone}
+📍 נוסע ל: {destination}
+⏰ זמן יציאה משוער: {time_info}
+
+"""
+                else:
+                    driver_name = PreferenceHelper.get_driver_name(driver)
+                    message += f"""🚗 נהג #{i}:
+👤 שם: {driver_name}
+📱 טלפון: {driver_phone}
+📍 נוסע ל: {destination}
+⏰ זמן יציאה משוער: {time_info}
+
+"""
+            
+            message += """תוכל ליצור קשר עם כל אחד מהם כדי לתאם את הפרטים המדויקים! 📲
+(מומלץ ליצור קשר עם הנהג הראשון שיאשר)
+
+אם מצאת טרמפ שלח ״מצאתי״ כדי שאפסיק לשלוח לך שמות של נהגים."""
         
-        self.whatsapp_client.send_message(hitchhiker['phone_number'], message)
+        # Use atomic operation to ensure only one notification is sent with all approved drivers
+        # This prevents multiple simultaneous calls from sending duplicate messages
+        # We'll use a flag to track if notification is being sent, and only send if we successfully set it
         
-        # Log notification
-        self._log_notification(
-            hitchhiker['_id'],
-            hitchhiker['phone_number'],
-            "approval",
-            ride_request['_id'],
-            match['_id']
+        # Try to atomically set notification_sending flag and update count
+        # Only one process will succeed, and that one will send the message
+        result = self.db.get_collection("ride_requests").find_one_and_update(
+            {
+                "_id": ride_request['_id'],
+                "$or": [
+                    {"approval_notification_driver_count": {"$exists": False}},
+                    {"approval_notification_driver_count": {"$lt": len(approved_drivers)}},
+                    {"approval_notification_sending": {"$ne": True}}  # Not currently being sent
+                ]
+            },
+            {
+                "$set": {
+                    "approval_notification_driver_count": len(approved_drivers),
+                    "approval_notification_sending": True,  # Mark as being sent
+                    "last_approval_notification_at": datetime.now()
+                }
+            },
+            return_document=True
         )
-    
-    def _log_notification(self, recipient_id: ObjectId, recipient_phone: str,
-                         notification_type: str, ride_request_id: ObjectId = None,
-                         match_id: ObjectId = None):
-        """Log notification to database"""
-        notification = {
-            "recipient_id": recipient_id,
-            "recipient_phone": recipient_phone,
-            "type": notification_type,
-            "title": "נהג אישר את הבקשה",
-            "message": "נהג אישר את הבקשה שלך",
-            "ride_request_id": ride_request_id,
-            "match_id": match_id,
-            "status": "sent",
-            "sent_at": datetime.now(),
-            "created_at": datetime.now()
-        }
         
-        self.db.get_collection("notifications").insert_one(notification)
+        # Only send message if we successfully updated (meaning we're the first to update)
+        if result:
+            try:
+                self.whatsapp_client.send_message(hitchhiker['phone_number'], message)
+                
+                logger.info(f"✅ Notified hitchhiker {hitchhiker['phone_number']} about {len(approved_drivers)} approved driver(s)")
+            finally:
+                # Always clear the sending flag, even if sending failed
+                self.db.get_collection("ride_requests").update_one(
+                    {"_id": ride_request['_id']},
+                    {"$unset": {"approval_notification_sending": ""}}
+                )
+        else:
+            logger.debug(f"Another process is already sending notification for ride request {ride_request['_id']}, skipping duplicate")
+    
+# _log_notification removed - notifications collection no longer exists
 
 
 

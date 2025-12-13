@@ -226,7 +226,11 @@ def is_current_time_in_range(start_time: datetime, end_time: datetime) -> bool:
 
 def parse_routine_departure_time(departure_time_str: str, days: str = None) -> Tuple[Optional[datetime], Optional[datetime]]:
     """
-    Parse routine departure time to a time range for today
+    Parse routine departure time to a time range (without specific date)
+    
+    Routines are daily patterns, so they should not have a specific date.
+    We use a generic date (1900-01-01) to represent "any day" - the date will be normalized
+    when matching against ride requests.
     
     Args:
         departure_time_str: Time string like "07:00" or "7:00"
@@ -234,18 +238,27 @@ def parse_routine_departure_time(departure_time_str: str, days: str = None) -> T
     
     Returns:
         Tuple of (start_datetime, end_datetime) - creates 1 hour window around departure time
+        Uses generic date 1900-01-01 to represent "any day"
     """
     if not departure_time_str:
         return None, None
     
     try:
         time_obj = parse_time_string(departure_time_str)
-        today = datetime.now().date()
-        start_datetime = datetime.combine(today, time_obj)
+        # Use generic date (1900-01-01) - routines don't have specific dates
+        # The date will be normalized when matching against ride requests
+        generic_date = datetime(1900, 1, 1).date()
+        start_datetime = datetime.combine(generic_date, time_obj)
         
         # Create 30 minute window before and after departure time
         start_range = start_datetime - timedelta(minutes=30)
         end_range = start_datetime + timedelta(minutes=30)
+        
+        # Handle times that cross midnight (e.g., 23:40 -> 00:10)
+        # If end_range < start_range, it means we crossed midnight
+        if end_range < start_range:
+            # Add a day to end_range to represent next day
+            end_range = end_range + timedelta(days=1)
         
         return start_range, end_range
     except Exception as e:
