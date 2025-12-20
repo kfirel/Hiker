@@ -6,6 +6,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from flask import Flask, request, jsonify
 import logging
 import threading
+import time
+from src.performance_monitor import perf_monitor, log_timing
 
 # Configure logging first (before other imports)
 from src.logging_config import setup_logging
@@ -159,9 +161,18 @@ def webhook_handler():
     Webhook endpoint to receive incoming WhatsApp messages
     Returns immediately and processes messages in background thread for faster response
     """
+    webhook_start_time = time.time()
     try:
         data = request.get_json()
-        logger.info(f"Received webhook data: {data}")
+        parse_time = time.time() - webhook_start_time
+        log_timing("webhook_parse_json", parse_time)
+        
+        # Log summary instead of full payload for performance
+        if data and data.get('object') == 'whatsapp_business_account':
+            entry_count = len(data.get('entry', []))
+            logger.info(f"📥 Received webhook: {entry_count} entry(ies) | Parse: {parse_time:.3f}s")
+        else:
+            logger.debug(f"Received webhook data: {data}")
         
         # Parse incoming message
         if data.get('object') == 'whatsapp_business_account':
@@ -172,17 +183,21 @@ def webhook_handler():
                     # Check if this is a message
                     if 'messages' in value:
                         for message in value['messages']:
+                            from_number = message.get('from')
                             # Process message in background thread to return webhook response quickly
                             # This prevents WhatsApp from retrying due to slow response
                             thread = threading.Thread(
                                 target=process_message,
-                                args=(message, value),
+                                args=(message, value, webhook_start_time),
                                 daemon=True
                             )
                             thread.start()
-                            logger.info(f"Started background thread to process message from {message.get('from')}")
+                            webhook_response_time = time.time() - webhook_start_time
+                            logger.info(f"🚀 Started background thread for {from_number} | Webhook response: {webhook_response_time:.3f}s")
         
         # Return success immediately - message processing happens in background
+        webhook_total_time = time.time() - webhook_start_time
+        log_timing("webhook_total_response", webhook_total_time)
         return jsonify({'status': 'success'}), 200
         
     except Exception as e:
@@ -191,14 +206,20 @@ def webhook_handler():
 
 # Removed handle_match_response - now using MatchResponseHandler
 
-def process_message(message, value):
+def process_message(message, value, webhook_received_time=None):
     """
     Process incoming WhatsApp message using conversation engine
     
     Args:
         message (dict): Message data
         value (dict): Value data containing metadata
+        webhook_received_time (float): Timestamp when webhook was received (for latency tracking)
     """
+    process_start_time = time.time()
+    if webhook_received_time:
+        latency = process_start_time - webhook_received_time
+        logger.info(f"⏱️  PERF: Webhook→Processing latency: {latency:.3f}s")
+    
     message_type = message.get('type')
     
     # Extract message details
@@ -239,32 +260,29 @@ def process_message(message, value):
     except Exception as e:
         logger.debug(f"Error extracting profile name from webhook for {from_number}: {e}")
     
-    # If not found in webhook, try to get from API (with timeout, won't block long)
-    # Note: This is still synchronous but has timeout, so it won't hang indefinitely
-    if not profile_name:
-        try:
-            profile_name = whatsapp_client.get_user_profile_name(from_number)
-            if profile_name:
-                # Ensure user exists
-                if not user_db.user_exists(from_number):
-                    user_db.create_user(from_number)
-                # Save WhatsApp name BUT DON'T save as full_name yet
-                # Wait for user confirmation in confirm_whatsapp_name state
-                if not user_db.get_profile_value(from_number, 'whatsapp_name'):
-                    user_db.save_to_profile(from_number, 'whatsapp_name', profile_name)
-                    logger.info(f"Saved WhatsApp name '{profile_name}' for {from_number}")
-                
-                # Only save as full_name if user already has full_name (backward compatibility)
-                # OR if user is already registered (don't interfere with confirmation flow)
-                existing_full_name = user_db.get_profile_value(from_number, 'full_name')
-                is_registered = user_db.is_registered(from_number)
-                if existing_full_name or is_registered:
-                    # User already has a name or is registered - safe to save as full_name
-                    if not existing_full_name:
-                        user_db.save_to_profile(from_number, 'full_name', profile_name)
-                        logger.info(f"Saved WhatsApp name '{profile_name}' as full_name for registered user {from_number}")
-        except Exception as e:
-            logger.debug(f"Could not fetch profile name for {from_number}: {e}")
+    # If not found in webhook, fetch profile name in background (non-blocking)
+    # Only fetch if user doesn't exist yet - skip for existing users to avoid delays
+    if not profile_name and not user_db.user_exists(from_number):
+        # Fetch profile name in background thread to avoid blocking message processing
+        def fetch_and_save_profile_name():
+            try:
+                fetched_name = whatsapp_client.get_user_profile_name(from_number)
+                if fetched_name:
+                    # Ensure user exists (may have been created by now)
+                    if not user_db.user_exists(from_number):
+                        user_db.create_user(from_number)
+                    # Save WhatsApp name BUT DON'T save as full_name yet
+                    # Wait for user confirmation in confirm_whatsapp_name state
+                    if not user_db.get_profile_value(from_number, 'whatsapp_name'):
+                        user_db.save_to_profile(from_number, 'whatsapp_name', fetched_name)
+                        logger.info(f"Saved WhatsApp name '{fetched_name}' for {from_number} (background)")
+            except Exception as e:
+                logger.debug(f"Could not fetch profile name for {from_number} in background: {e}")
+        
+        # Start background thread for profile name fetching (non-blocking)
+        profile_thread = threading.Thread(target=fetch_and_save_profile_name, daemon=True)
+        profile_thread.start()
+        logger.debug(f"Started background thread to fetch profile name for {from_number}")
     
     # Handle different message types
     if message_type == 'text':
@@ -448,7 +466,10 @@ def process_message(message, value):
     
     # Process message through conversation engine
     try:
+        engine_start = time.time()
         response, buttons = conversation_engine.process_message(from_number, message_text)
+        engine_time = time.time() - engine_start
+        log_timing("conversation_engine_process", engine_time, {"message_length": len(message_text)})
         
         if response:
             # Log the response and buttons
@@ -460,7 +481,10 @@ def process_message(message, value):
             
             # Send response with optional buttons
             # Logging is now automatic in WhatsAppClient.send_message (lowest level)
+            send_start = time.time()
             success = whatsapp_client.send_message(from_number, response, buttons=buttons)
+            send_time = time.time() - send_start
+            log_timing("whatsapp_api_send", send_time, {"has_buttons": bool(buttons), "success": success})
             if success:
                 logger.info(f"Sent response to {from_number} (with buttons: {len(buttons) if buttons else 0})")
                 
@@ -478,11 +502,26 @@ def process_message(message, value):
                     user_db.update_context(from_number, 'pending_auto_approval_ride_request_id', None)
             else:
                 logger.error(f"Failed to send response to {from_number}")
+            
+            # Log total processing time
+            total_time = time.time() - process_start_time
+            log_timing("total_message_processing", total_time, {
+                "from": from_number,
+                "message_type": message_type,
+                "has_response": bool(response)
+            })
+            if webhook_received_time:
+                end_to_end_time = time.time() - webhook_received_time
+                logger.info(f"⏱️  PERF: End-to-end latency (webhook→response): {end_to_end_time:.3f}s")
     
     except Exception as e:
         import traceback
         error_traceback = traceback.format_exc()
         error_msg = f"Error processing message '{message_text}' from {from_number}"
+        # Log error timing
+        if 'process_start_time' in locals():
+            error_time = time.time() - process_start_time
+            log_timing("message_processing_error", error_time, {"error": str(e)})
         
         # Log to both system logger and user logger
         logger.error(error_msg, exc_info=True)

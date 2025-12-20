@@ -1,7 +1,9 @@
 import requests
 import logging
+import time
 from typing import Optional
 from src.config import Config
+from src.performance_monitor import log_timing
 
 logger = logging.getLogger(__name__)
 
@@ -42,8 +44,9 @@ class WhatsAppClient:
         }
         
         try:
-            # Add timeout to prevent hanging (2 seconds for connect, 3 seconds for read)
-            response = requests.get(profile_url, headers=headers, params=params, timeout=(2, 3))
+            # Add timeout to prevent hanging (1 second for connect, 2 seconds for read)
+            # Reduced timeout since this is now only called in background threads
+            response = requests.get(profile_url, headers=headers, params=params, timeout=(1, 2))
             if response.status_code == 200:
                 data = response.json()
                 # Profile name is usually in 'name' field
@@ -106,11 +109,15 @@ class WhatsAppClient:
         }
         
         try:
+            api_start = time.time()
             # Add timeout to prevent hanging (5 seconds for send, 2 seconds for connect)
             response = requests.post(self.api_url, json=payload, headers=headers, timeout=(2, 5))
+            api_time = time.time() - api_start
+            log_timing("whatsapp_api_request", api_time, {"endpoint": "send_message", "status": response.status_code})
+            
             response.raise_for_status()
             
-            logger.info(f"Text message sent successfully to {to_phone_number}")
+            logger.info(f"Text message sent successfully to {to_phone_number} | API call: {api_time:.3f}s")
             return True
             
         except requests.exceptions.Timeout as e:
