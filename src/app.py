@@ -226,6 +226,17 @@ def process_message(message, value, webhook_received_time=None):
     from_number = message.get('from')
     message_id = message.get('id')
     
+    # Handle ping test command (immediate response, bypasses all processing)
+    if message_type == 'text':
+        message_text = message.get('text', {}).get('body', '').strip()
+        if message_text.lower() == 'ping':
+            from datetime import datetime
+            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+            pong_message = f"pong - {timestamp}"
+            logger.info(f"🏓 Ping received from {from_number}, responding immediately")
+            whatsapp_client.send_message(from_number, pong_message)
+            return  # Exit early, don't process through conversation engine
+    
     # Try to get user's profile name from contacts in webhook data
     # WhatsApp sometimes includes contact info in the webhook
     profile_name = None
