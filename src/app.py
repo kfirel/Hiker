@@ -118,6 +118,33 @@ def root_webhook_verify():
         'webhook_endpoint': '/webhook'
     }), 200
 
+@app.route('/', methods=['GET', 'POST'])
+def root_handler():
+    """
+    Root endpoint handler - forwards webhook requests to /webhook
+    This handles cases where webhook URL is set to root instead of /webhook
+    """
+    if request.method == 'GET':
+        # Handle webhook verification if sent to root
+        mode = request.args.get('hub.mode')
+        token = request.args.get('hub.verify_token')
+        challenge = request.args.get('hub.challenge')
+        
+        if mode == 'subscribe' and token == Config.WEBHOOK_VERIFY_TOKEN:
+            logger.info('Webhook verified successfully (via root endpoint)!')
+            return challenge, 200
+        else:
+            # Return health check response for regular GET requests
+            return jsonify({
+                'status': 'healthy',
+                'message': 'WhatsApp Bot is running',
+                'webhook_endpoint': '/webhook'
+            }), 200
+    else:
+        # POST request - forward to webhook handler
+        logger.warning('Received POST request at root endpoint - forwarding to /webhook handler')
+        return webhook_handler()
+
 @app.route('/webhook', methods=['GET'])
 def webhook_verify():
     """
@@ -433,7 +460,7 @@ def process_message(message, value):
             
             # Send response with optional buttons
             # Logging is now automatic in WhatsAppClient.send_message (lowest level)
-            success = whatsapp_client.send_message(from_number, response, buttons=buttons, state=log_state if 'log_state' in locals() else None)
+            success = whatsapp_client.send_message(from_number, response, buttons=buttons)
             if success:
                 logger.info(f"Sent response to {from_number} (with buttons: {len(buttons) if buttons else 0})")
                 
