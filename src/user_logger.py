@@ -91,6 +91,10 @@ class UserLogger:
         
         # Write to log file in readable format (unbuffered for immediate write)
         try:
+            import time
+            from src.performance_monitor import log_timing
+            
+            file_start = time.time()
             with open(log_file, 'a', encoding='utf-8', buffering=1) as f:
                 # Write separator for readability
                 f.write('─' * 80 + '\n')
@@ -130,6 +134,11 @@ class UserLogger:
                 
                 f.write('\n')  # Extra line for spacing
                 f.flush()  # Force write to disk immediately
+            
+            file_time = time.time() - file_start
+            if file_time > 0.1:  # Only log if slow (>100ms)
+                from src.performance_monitor import log_timing
+                log_timing("user_logger_file_write", file_time)
         except Exception as e:
             # Don't let logging errors break the app
             logging.error(f"Failed to write to user log: {e}")

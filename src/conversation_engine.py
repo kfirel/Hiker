@@ -79,43 +79,64 @@ class ConversationEngine:
         Args:
             phone_number: User's phone number
             message_text: Message text from user
-            
+        
         Returns:
             Tuple of (response_message, buttons_list)
         """
+        import time
+        from src.performance_monitor import log_timing
+        
         message_text = message_text.strip()
         
         # Log incoming message
+        log_start = time.time()
         self.user_logger.log_user_message(phone_number, message_text)
+        log_timing("user_logger_log_message", time.time() - log_start)
         
         # Check for special commands
+        cmd_start = time.time()
         command_response = self._check_commands(phone_number, message_text)
+        log_timing("check_commands", time.time() - cmd_start)
         if command_response:
             response_msg, buttons = command_response if isinstance(command_response, tuple) else (command_response, None)
             # Logging is now automatic in WhatsAppClient.send_message (lowest level)
             return response_msg, buttons
         
         # Get user's current state
+        db_start = time.time()
         if not self.user_db.user_exists(phone_number):
             self.user_db.create_user(phone_number)
+        log_timing("db_user_exists_create", time.time() - db_start)
         
+        db_start = time.time()
         current_state_id = self.user_db.get_user_state(phone_number)
+        log_timing("db_get_user_state", time.time() - db_start)
         
         # If registered user sending message after idle or registration_complete, show menu
         # Also check if user has completed profile (has user_type) even if not marked as registered
         if current_state_id in ['idle', 'registration_complete']:
+            import time
+            from src.performance_monitor import log_timing
+            
+            db_start = time.time()
             user = self.user_db.get_user(phone_number)
+            log_timing("db_get_user", time.time() - db_start)
+            
             if not user:
                 # User doesn't exist - restart registration
                 logger.info(f"User {phone_number} in {current_state_id} but doesn't exist, restarting registration")
                 current_state_id = 'initial'
+                db_start = time.time()
                 self.user_db.set_user_state(phone_number, current_state_id)
+                log_timing("db_set_user_state", time.time() - db_start)
             else:
                 # Get profile from user document (MongoDB stores directly in user, not nested in 'profile')
                 profile = user.get('profile', {})
                 # Also check user document directly for user_type (MongoDB stores it at root level)
                 user_type = user.get('user_type') or profile.get('user_type')
+                db_start = time.time()
                 is_registered = self.user_db.is_registered(phone_number)
+                log_timing("db_is_registered", time.time() - db_start)
                 has_user_type = user_type is not None
                 
                 logger.info(f"User {phone_number} in {current_state_id}: is_registered={is_registered}, has_user_type={has_user_type}, user_type={user_type}")
@@ -147,7 +168,12 @@ class ConversationEngine:
             return "מצטער, משהו השתבש. הקש 'חדש' כדי להתחיל מחדש.", None
         
         # Process input based on state
+        import time
+        from src.performance_monitor import log_timing
+        
+        process_start = time.time()
         result = self._process_state(phone_number, current_state, message_text)
+        log_timing("_process_state", time.time() - process_start)
         
         # Handle different return formats
         if len(result) == 3:
@@ -176,8 +202,13 @@ class ConversationEngine:
                 # Perform action if specified (important for states like confirm_hitchhiker_ride_request)
                 # Action should be executed regardless of whether message is already in response
                 if next_state_def.get('action') and not next_state_def.get('expected_input'):
+                    import time
+                    from src.performance_monitor import log_timing
+                    
                     logger.info(f"✅ Executing action '{next_state_def.get('action')}' for state '{next_state}'")
+                    action_start = time.time()
                     self.action_executor.execute(phone_number, next_state_def['action'], {})
+                    log_timing("action_executor_execute", time.time() - action_start, {"action": next_state_def.get('action')})
                     
                     # Store ride request ID for auto-approval processing after message is sent
                     # This will be handled in app.py after the message is sent
