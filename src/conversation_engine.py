@@ -545,7 +545,15 @@ class ConversationEngine:
     
     def _get_state_message(self, phone_number: str, state: Dict[str, Any]) -> str:
         """Get message for state with variable substitution"""
-        return self.message_formatter.format_message(phone_number, state)
+        import time
+        from src.performance_monitor import log_timing
+        
+        msg_start = time.time()
+        message = self.message_formatter.format_message(phone_number, state)
+        msg_time = time.time() - msg_start
+        if msg_time > 0.1:  # Only log if slow
+            log_timing("_get_state_message", msg_time)
+        return message
     
     def _get_next_state(self, phone_number: str, state: Dict[str, Any], user_input: Optional[str]) -> Optional[str]:
         """Determine next state based on conditions"""
@@ -593,27 +601,44 @@ class ConversationEngine:
     
     def _handle_restart(self, phone_number: str) -> Tuple[str, Optional[str], Optional[list]]:
         """Handle restart action - full user data reset"""
+        import time
+        from src.performance_monitor import log_timing
+        
+        restart_start = time.time()
+        
         # Log restart event BEFORE clearing (so it's saved)
+        log_start = time.time()
         self.user_logger.log_event(phone_number, 'restart', {'reason': 'user_requested'})
+        log_timing("restart_log_event", time.time() - log_start)
         
         # Preserve WhatsApp name before deleting user data
         # WhatsApp name comes from API/webhook, not user input, so we should keep it
+        db_start = time.time()
         whatsapp_name = self.user_db.get_profile_value(phone_number, 'whatsapp_name')
+        log_timing("restart_get_whatsapp_name", time.time() - db_start)
         
         # Delete all user data to start fresh
+        db_start = time.time()
         self.user_db.delete_user_data(phone_number)
+        log_timing("restart_delete_user_data", time.time() - db_start)
         
         # Clear all context variables to ensure complete cleanup
         # Create a fresh user first to ensure user exists
+        db_start = time.time()
         self.user_db.create_user(phone_number)
+        log_timing("restart_create_user", time.time() - db_start)
         
         # Restore WhatsApp name if it existed (it comes from WhatsApp API, not user input)
         if whatsapp_name:
+            db_start = time.time()
             self.user_db.save_to_profile(phone_number, 'whatsapp_name', whatsapp_name)
+            log_timing("restart_save_whatsapp_name", time.time() - db_start)
             logger.info(f"💾 Preserved WhatsApp name '{whatsapp_name}' for {phone_number} after restart")
         
         # Explicitly reset context to ensure no state leaks
+        db_start = time.time()
         self.user_db.set_user_state(phone_number, 'initial', {})
+        log_timing("restart_set_initial_state", time.time() - db_start)
         
         # Note: We keep the logs (don't delete) so we have history
         # If you want to delete logs on restart, uncomment the next line:
@@ -623,12 +648,16 @@ class ConversationEngine:
         initial_state = self.flow['states'].get('initial')
         if initial_state:
             # Use _process_state to handle initial state routing (checks for WhatsApp name)
+            process_start = time.time()
             result = self._process_state(phone_number, initial_state, '')
+            log_timing("restart_process_initial_state", time.time() - process_start)
             if len(result) == 3:
                 message, next_state, buttons = result
             else:
                 message, next_state = result
                 buttons = None
+            restart_total = time.time() - restart_start
+            log_timing("_handle_restart_total", restart_total)
             return message, next_state, buttons
         
         # Fallback to ask_full_name if initial state not found
@@ -638,9 +667,13 @@ class ConversationEngine:
             message = self._get_state_message(phone_number, next_state_def)
             buttons = self._build_buttons(next_state_def)
             self.user_db.set_user_state(phone_number, next_state, {'last_state': next_state})
+            restart_total = time.time() - restart_start
+            log_timing("_handle_restart_total", restart_total)
             return message, next_state, buttons
         
         # Final fallback
+        restart_total = time.time() - restart_start
+        log_timing("_handle_restart_total", restart_total)
         return "היי! בואו נתחיל מחדש.", 'ask_full_name', None
     
     def _check_commands(self, phone_number: str, message_text: str):
