@@ -29,8 +29,14 @@ class Config:
     # Set to 'true' to require MongoDB (raise error if not available), 'false' to allow JSON fallback
     REQUIRE_MONGODB = os.getenv('REQUIRE_MONGODB', 'false').lower() == 'true'
     
-    # WhatsApp API URL
-    WHATSAPP_API_URL = f"https://graph.facebook.com/v18.0/{WHATSAPP_PHONE_NUMBER_ID}/messages"
+    # WhatsApp API URL - computed property to handle None values
+    @classmethod
+    def get_whatsapp_api_url(cls):
+        """Get WhatsApp API URL, handling None phone number ID"""
+        phone_id = cls.WHATSAPP_PHONE_NUMBER_ID
+        if not phone_id:
+            return None
+        return f"https://graph.facebook.com/v18.0/{phone_id}/messages"
     
     @staticmethod
     def validate():

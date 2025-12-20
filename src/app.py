@@ -81,22 +81,50 @@ button_parser = ButtonParser()
 logger.info("Matching and notification services initialized")
 logger.info("Handlers initialized")
 
+def handle_webhook_verification():
+    """
+    Handle webhook verification (used by both / and /webhook routes)
+    """
+    mode = request.args.get('hub.mode')
+    token = request.args.get('hub.verify_token')
+    challenge = request.args.get('hub.challenge')
+    
+    # Log verification attempt for debugging
+    logger.info(f"Webhook verification attempt - mode: {mode}, token received: {bool(token)}, challenge: {bool(challenge)}")
+    logger.debug(f"Expected token: {Config.WEBHOOK_VERIFY_TOKEN[:10]}..." if Config.WEBHOOK_VERIFY_TOKEN else "Expected token: None")
+    logger.debug(f"Received token: {token[:10]}..." if token else "Received token: None")
+    
+    if mode == 'subscribe' and token == Config.WEBHOOK_VERIFY_TOKEN:
+        logger.info('✅ Webhook verified successfully!')
+        return challenge, 200
+    else:
+        logger.warning(f'❌ Webhook verification failed - mode: {mode}, token match: {token == Config.WEBHOOK_VERIFY_TOKEN if token else False}')
+        if not Config.WEBHOOK_VERIFY_TOKEN:
+            logger.error('WEBHOOK_VERIFY_TOKEN is not set in environment variables!')
+        return 'Forbidden', 403
+
+@app.route('/', methods=['GET'])
+def root_webhook_verify():
+    """
+    Handle webhook verification at root path (Meta sometimes sends to / instead of /webhook)
+    """
+    # Check if this is a webhook verification request
+    if request.args.get('hub.mode') == 'subscribe':
+        return handle_webhook_verification()
+    # Otherwise return health check or simple response
+    return jsonify({
+        'status': 'healthy',
+        'message': 'WhatsApp Bot is running',
+        'webhook_endpoint': '/webhook'
+    }), 200
+
 @app.route('/webhook', methods=['GET'])
 def webhook_verify():
     """
     Webhook verification endpoint for WhatsApp Cloud API
     Meta will call this endpoint to verify your webhook
     """
-    mode = request.args.get('hub.mode')
-    token = request.args.get('hub.verify_token')
-    challenge = request.args.get('hub.challenge')
-    
-    if mode == 'subscribe' and token == Config.WEBHOOK_VERIFY_TOKEN:
-        logger.info('Webhook verified successfully!')
-        return challenge, 200
-    else:
-        logger.warning('Webhook verification failed')
-        return 'Forbidden', 403
+    return handle_webhook_verification()
 
 @app.route('/webhook', methods=['POST'])
 def webhook_handler():
@@ -447,25 +475,31 @@ def health_check():
     }), 200
 
 if __name__ == '__main__':
+    # Validate configuration (but don't fail startup - log warning instead)
     try:
-        # Validate configuration
         Config.validate()
         logger.info("Configuration validated successfully")
+    except ValueError as e:
+        logger.warning(f"Configuration warning: {str(e)}")
+        logger.warning("Some features may not work. Please set required environment variables.")
+        # Continue anyway - app should still start for health checks
+    
+    # Always start Flask app - Cloud Run needs the port to be listening
+    try:
+        port = Config.FLASK_PORT
+        logger.info(f"Starting WhatsApp Bot on port {port} (PORT env: {os.getenv('PORT', 'not set')})")
+        logger.info(f"Debug mode: {Config.FLASK_DEBUG}")
         
-        # Start Flask app
-        logger.info(f"Starting WhatsApp Bot on port {Config.FLASK_PORT}")
         # Run Flask with auto-reload enabled by default
         # Set FLASK_DEBUG=False in .env to disable for production
         app.run(
             host='0.0.0.0',
-            port=Config.FLASK_PORT,
+            port=port,
             debug=Config.FLASK_DEBUG,
             use_reloader=Config.FLASK_DEBUG  # Auto-reload on file changes
         )
-        
-    except ValueError as e:
-        logger.error(f"Configuration error: {str(e)}")
-        logger.error("Please copy .env.example to .env and fill in your credentials")
     except Exception as e:
         logger.error(f"Failed to start application: {str(e)}", exc_info=True)
+        # Re-raise to ensure Cloud Run sees the failure
+        raise
 

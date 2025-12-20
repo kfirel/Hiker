@@ -17,7 +17,7 @@ class WhatsAppClient:
         """
         self.phone_number_id = Config.WHATSAPP_PHONE_NUMBER_ID
         self.access_token = Config.WHATSAPP_ACCESS_TOKEN
-        self.api_url = Config.WHATSAPP_API_URL
+        self.api_url = Config.get_whatsapp_api_url()
         self.user_logger = user_logger
     
     def get_user_profile_name(self, phone_number: str) -> Optional[str]:
