@@ -1,344 +1,266 @@
-# 🚗 Hiker - WhatsApp Hitchhiking Bot
+# Gvar'am Hitchhiking Bot 🚗
 
-<div align="center">
+A WhatsApp bot for the Gvar'am hitchhiking community, built with FastAPI, Google Cloud Firestore, and Gemini AI with Function Calling.
 
-![Python](https://img.shields.io/badge/python-3.10-blue.svg)
-![Flask](https://img.shields.io/badge/flask-latest-green.svg)
-![WhatsApp](https://img.shields.io/badge/WhatsApp-Cloud%20API-25D366.svg)
-![License](https://img.shields.io/badge/license-MIT-blue.svg)
+## Features
 
-**בוט חכם לטרמפים בישוב גברעם** 🇮🇱
+- **AI-Powered Conversations**: Uses Gemini 1.5 Flash to understand user intent in Hebrew
+- **Role Detection**: Automatically identifies drivers and hitchhikers
+- **Structured Data Extraction**: Function calling to save organized data to Firestore
+- **Smart Matching**: Connects drivers with hitchhikers based on routes and schedules
+- **Stateless Architecture**: Fully deployed on Google Cloud Run with Firestore persistence
+- **Hebrew Language Support**: Native Hebrew conversation interface
 
-מחבר בין טרמפיסטים לנהגים מגברעם באמצעות WhatsApp
+## Architecture
 
-[תיעוד](#-תיעוד) • [התקנה](#-התקנה-מהירה) • [תכונות](#-תכונות) • [מבנה](#-מבנה-הפרויקט)
-
-</div>
-
----
-
-## 📖 אודות
-
-**Hiker** הוא בוט WhatsApp חכם המאפשר לטרמפיסטים ונהגים מישוב גברעם להתחבר בקלות ובמהירות. הבוט משתמש ב-WhatsApp Cloud API של Meta ומציע חוויית משתמש אינטואיטיבית עם כפתורים אינטראקטיביים ותהליך רישום חכם.
-
-### למה Hiker?
-
-✅ **קל לשימוש** - ממשק אינטואיטיבי עם כפתורים אינטראקטיביים  
-✅ **חכם** - אימות אוטומטי של ישובים, ימים ושעות  
-✅ **גמיש** - תומך בטרמפיסטים, נהגים, ושניהם  
-✅ **מאובטח** - שימוש ב-WhatsApp Cloud API הרשמי  
-✅ **בעברית** - ממשק מלא בעברית עם הומור וידידותיות  
-
----
-
-## 🎯 תכונות
-
-### לטרמפיסטים 🚶
-- 🎯 בקשת טרמפ מיידית או מתוכננת
-- 📍 הגדרת יעדים מועדפים
-- ⏰ בחירת טווח שעות גמיש
-- 🔔 התראות על נהגים מתאימים
-
-### לנהגים 🚗
-- 🗓️ הגדרת שגרת נסיעה קבועה
-- 📢 פרסום טרמפים באופן אקטיבי
-- 🎯 בחירת העדפות התראות חכמות
-- 📊 ניהול מסלולים מרובים
-
-### תכונות מתקדמות ✨
-- 🔘 כפתורים אינטראקטיביים לכל פעולה
-- ✅ אימות אוטומטי של ישובים (100+ ישובים)
-- 🤖 הצעות חכמות לישובים דומים עם כפתורים
-- 📅 אימות פורמטים (ימים, שעות, טווחי זמן)
-- 💬 מסך עזרה מובנה
-- 🔄 כפתור restart בכל אינטראקציה
-- 🌐 תמיכה בפקודות מקוצרות (חזור, חדש, תפריט, עזרה)
-
----
-
-## 🚀 התקנה מהירה
-
-### דרישות מקדימות
-
-- Python 3.10+
-- חשבון Meta Developer (חינם)
-- חשבון WhatsApp Business
-- חשבון ngrok (לפיתוח מקומי)
-
-### שלב 1: שכפול הפרויקט
-
-```bash
-git clone https://github.com/YOUR_USERNAME/Hiker.git
-cd Hiker
+```
+WhatsApp User → Meta Cloud API → FastAPI Webhook → Gemini AI → Firestore
 ```
 
-### שלב 2: התקנת תלויות
+### Components
+
+1. **main.py**: FastAPI application with WhatsApp webhook handlers
+2. **agent.py**: Gemini AI integration with function calling
+3. **database.py**: Firestore operations for user data persistence
+4. **Dockerfile**: Container configuration for Cloud Run deployment
+
+## Prerequisites
+
+1. **Google Cloud Project** with:
+   - Firestore database enabled
+   - Service account with Firestore permissions
+   - Cloud Run API enabled
+
+2. **Gemini API Key**:
+   - Get from [Google AI Studio](https://makersuite.google.com/app/apikey)
+
+3. **WhatsApp Business Account**:
+   - Set up via [Meta for Developers](https://developers.facebook.com/)
+   - Get Phone Number ID and Access Token
+
+## Local Development Setup
+
+### 1. Clone and Install Dependencies
 
 ```bash
-# יצירת סביבה וירטואלית
-python3 -m venv venv
-source venv/bin/activate  # Linux/Mac
-# או: venv\Scripts\activate  # Windows
-
-# התקנת חבילות
+# Install Python dependencies
 pip install -r requirements.txt
 ```
 
-### שלב 3: הגדרת משתני סביבה
+### 2. Configure Environment Variables
 
 ```bash
-# העתקת הקובץ לדוגמה
+# Copy example env file
 cp .env.example .env
 
-# ערוך את הקובץ .env והוסף את המפתחות שלך:
+# Edit .env with your credentials
 nano .env
 ```
 
-הוסף את הפרטים הבאים:
-```env
-WHATSAPP_API_TOKEN=your_token_here
-WHATSAPP_PHONE_NUMBER_ID=your_phone_number_id
-WEBHOOK_VERIFY_TOKEN=your_custom_verify_token
-NGROK_AUTHTOKEN=your_ngrok_token
-```
+Required variables:
+- `GEMINI_API_KEY`: Your Gemini API key
+- `WHATSAPP_TOKEN`: WhatsApp access token
+- `WHATSAPP_PHONE_NUMBER_ID`: Your WhatsApp phone number ID
+- `VERIFY_TOKEN`: Custom token for webhook verification (you create this)
+- `GOOGLE_APPLICATION_CREDENTIALS`: Path to service account JSON
 
-### שלב 4: הרצת הבוט
-
-```bash
-# הרצת ngrok (בטרמינל נפרד)
-python scripts/start_ngrok.py
-
-# הרצת הבוט (עם auto-reload!)
-python src/app.py
-```
-
-🎉 **הבוט פועל!** עכשיו הגדר את ה-webhook ב-Meta Developer Console.
-
-💡 **Auto-Reload מופעל כברירת מחדל** - הבוט יטען מחדש אוטומטית כשאתה משנה קוד!
-
----
-
-## ☁️ פריסה ל-Google Cloud Run
-
-הפרויקט כולל תמיכה מלאה בפריסה ל-Google Cloud Run באמצעות Docker.
-
-### פריסה מהירה
+### 3. Set Up Google Cloud Firestore
 
 ```bash
-# הגדר משתני סביבה
-export WHATSAPP_PHONE_NUMBER_ID=your_phone_number_id
-export WHATSAPP_ACCESS_TOKEN=your_access_token
-export WEBHOOK_VERIFY_TOKEN=your_verify_token
-export MONGODB_URI=your_mongodb_uri
+# Install Google Cloud CLI
+# https://cloud.google.com/sdk/docs/install
 
-# הפעל סקריפט הפריסה
-./scripts/deploy_cloud_run.sh [region] [project_id]
+# Login and set project
+gcloud auth login
+gcloud config set project YOUR_PROJECT_ID
+
+# Create Firestore database (if not exists)
+gcloud firestore databases create --location=us-central1
 ```
 
-### בדיקה מקומית עם Docker
+### 4. Run Locally
 
 ```bash
-# בניית תמונת Docker
-docker build -t hiker-bot .
+# Run the server
+python main.py
 
-# הרצה מקומית
-docker run -p 8080:8080 \
-  -e WHATSAPP_PHONE_NUMBER_ID=your_phone_number_id \
-  -e WHATSAPP_ACCESS_TOKEN=your_access_token \
-  -e WEBHOOK_VERIFY_TOKEN=your_verify_token \
-  -e MONGODB_URI=your_mongodb_uri \
-  hiker-bot
+# Or with uvicorn
+uvicorn main:app --reload --port 8080
 ```
 
-📖 **מדריך מפורט**: ראה [docs/CLOUD_RUN_DEPLOYMENT.md](docs/CLOUD_RUN_DEPLOYMENT.md) לפרטים מלאים.
+### 5. Test Webhook (Local)
 
-### אינטגרציה עם GitHub (CI/CD)
-
-להגדרת פריסה אוטומטית מ-GitHub ל-Cloud Run:
+Use ngrok to expose your local server:
 
 ```bash
-# הגדרת טריגר אוטומטי
-./scripts/setup_github_cloud_build.sh [project_id] [region] [github_owner] [repo_name] [branch]
+# Install ngrok: https://ngrok.com/download
+ngrok http 8080
+
+# Use the ngrok URL for WhatsApp webhook configuration
+# Example: https://abc123.ngrok.io/webhook
 ```
 
-📖 **מדריך מפורט**: ראה [docs/GITHUB_CLOUD_BUILD_SETUP.md](docs/GITHUB_CLOUD_BUILD_SETUP.md)
+## Google Cloud Run Deployment
 
----
-
-## 🏗️ מבנה הפרויקט
-
-```
-Hiker/
-├── README.md                    # המסמך הזה
-├── LICENSE                      # רישיון MIT
-├── requirements.txt             # תלויות Python
-├── .env.example                 # דוגמה למשתני סביבה
-├── .gitignore                   # קבצים להתעלם מהם
-│
-├── src/                         # 📦 קוד מקור
-│   ├── __init__.py
-│   ├── app.py                   # אפליקציה ראשית (Flask)
-│   ├── config.py                # הגדרות
-│   ├── whatsapp_client.py       # לקוח WhatsApp API
-│   ├── conversation_engine.py   # מנוע השיחה
-│   ├── conversation_flow.json   # הגדרת זרימת השיחה
-│   ├── user_database.py         # ניהול משתמשים
-│   ├── validation.py            # אימות קלט
-│   └── timer_manager.py         # ניהול טיימרים
-│
-├── tests/                       # 🧪 בדיקות
-│   ├── __init__.py
-│   ├── test_conversation_flow.py
-│   ├── test_interactive_suggestions.py
-│   └── debug_test.py
-│
-├── scripts/                     # 🔧 סקריפטים עזר
-│   ├── start_ngrok.py           # הרצת ngrok
-│   ├── verify_setup.py          # בדיקת התקנה
-│   └── push_to_github.sh        # העלאה לגיטהאב
-│
-└── docs/                        # 📚 תיעוד
-    ├── SETUP_GUIDE.md           # מדריך התקנה מפורט
-    ├── ARCHITECTURE.md          # ארכיטקטורת המערכת
-    ├── CONVERSATION_FLOW_GUIDE.md
-    ├── VALIDATION_GUIDE.md
-    ├── INTERACTIVE_BUTTONS_GUIDE.md
-    └── QUICK_REFERENCE.md
-```
-
----
-
-## 📚 תיעוד
-
-### מדריכים מפורטים
-
-- 📖 [**docs/SETUP_GUIDE.md**](docs/SETUP_GUIDE.md) - מדריך התקנה מפורט
-- 🏗️ [**docs/ARCHITECTURE.md**](docs/ARCHITECTURE.md) - ארכיטקטורת המערכת
-- 🔧 [**docs/NGROK_SETUP.md**](docs/NGROK_SETUP.md) - הגדרת ngrok
-- 🔗 [**docs/FIND_WEBHOOK_IN_META.md**](docs/FIND_WEBHOOK_IN_META.md) - הגדרת webhook
-- 🔘 [**docs/INTERACTIVE_BUTTONS_GUIDE.md**](docs/INTERACTIVE_BUTTONS_GUIDE.md) - כפתורים אינטראקטיביים
-- ✅ [**docs/VALIDATION_GUIDE.md**](docs/VALIDATION_GUIDE.md) - מנגנון האימות
-- 🔄 [**docs/AUTO_RELOAD_GUIDE.md**](docs/AUTO_RELOAD_GUIDE.md) - Auto-reload בפיתוח
-- 💡 [**docs/QUICK_REFERENCE.md**](docs/QUICK_REFERENCE.md) - עזר מהיר
-
----
-
-## 🎨 דוגמאות שימוש
-
-### זרימת טרמפיסט
-
-```
-משתמש: היי
-בוט: היי! 👋 ברוכים הבאים להייקר 🚗✨
-     מה השם המלא שלך?
-
-משתמש: דני כהן
-בוט: באיזה ישוב אתה גר? 🏡
-
-משתמש: תל אביב
-בוט: מה אתה?
-     [כפתור: 🚗🚶 גיבור על]
-     [כפתור: 🚶 טרמפיסט]
-     [כפתור: 🚗 נהג]
-     [כפתור: 🔄 התחל מחדש]
-```
-
-### משתמש רשום חוזר
-
-```
-משתמש: שלום
-בוט: היי דני! 👋😊
-     מה תרצה לעשות היום?
-     
-     [כפתור: 🚶 מחפש טרמפ]
-     [כפתור: 🚗 לתת טרמפ]
-     [כפתור: 📅 לתכנן נסיעה]
-     [כפתור: 🔄 עדכון שגרה]
-     [כפתור: ✏️ עדכון פרטים]
-     [כפתור: 💬 עזרה]
-```
-
----
-
-## 🧪 בדיקות
-
-הפרויקט כולל סוויטת בדיקות מקיפה:
+### 1. Build and Deploy
 
 ```bash
-# הרצת בדיקות
-python tests/test_conversation_flow.py
-python tests/test_interactive_suggestions.py
+# Set your project ID
+export PROJECT_ID=your-gcp-project-id
 
-# בדיקת debug ספציפית
-python tests/debug_test.py
+# Build container image
+gcloud builds submit --tag gcr.io/$PROJECT_ID/hitchhiking-bot
 
-# בדיקת התקנה
-python scripts/verify_setup.py
+# Deploy to Cloud Run
+gcloud run deploy hitchhiking-bot \
+  --image gcr.io/$PROJECT_ID/hitchhiking-bot \
+  --platform managed \
+  --region us-central1 \
+  --allow-unauthenticated \
+  --set-env-vars GEMINI_API_KEY=$GEMINI_API_KEY \
+  --set-env-vars WHATSAPP_TOKEN=$WHATSAPP_TOKEN \
+  --set-env-vars WHATSAPP_PHONE_NUMBER_ID=$WHATSAPP_PHONE_NUMBER_ID \
+  --set-env-vars VERIFY_TOKEN=$VERIFY_TOKEN \
+  --service-account YOUR_SERVICE_ACCOUNT@$PROJECT_ID.iam.gserviceaccount.com
 ```
 
-**כיסוי בדיקות:** 97.9% (47/48 טסטים עוברים)
+### 2. Configure WhatsApp Webhook
+
+1. Go to [Meta for Developers](https://developers.facebook.com/)
+2. Navigate to your WhatsApp app
+3. Go to WhatsApp → Configuration
+4. Add webhook callback URL: `https://your-cloud-run-url.run.app/webhook`
+5. Add verify token (must match your `VERIFY_TOKEN`)
+6. Subscribe to `messages` webhook field
+
+### 3. Test the Deployment
+
+Send a message to your WhatsApp Business number:
+
+```
+אני מחפש טרמפ לתל אביב מחר בשעה 9
+```
+
+## Data Schema
+
+### Firestore Collection: `users`
+
+Document ID: `phone_number`
+
+```json
+{
+  "phone_number": "+972501234567",
+  "role": "driver",
+  "notification_level": "all",
+  "driver_data": {
+    "origin": "גברעם",
+    "destination": "תל אביב",
+    "days": ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday"],
+    "departure_time": "09:00",
+    "return_time": "17:30",
+    "available_seats": 3,
+    "notes": ""
+  },
+  "hitchhiker_data": {},
+  "last_seen": "2024-01-15T10:30:00.000Z",
+  "chat_history": [
+    {
+      "role": "user",
+      "content": "אני נוסע לתל אביב כל יום",
+      "timestamp": "2024-01-15T10:29:00.000Z"
+    },
+    {
+      "role": "assistant",
+      "content": "נהדר! באיזה ימים בשבוע אתה נוסע?",
+      "timestamp": "2024-01-15T10:29:05.000Z"
+    }
+  ]
+}
+```
+
+## AI Function Calling
+
+The bot uses Gemini's function calling feature to extract structured data:
+
+**Function**: `update_user_records`
+
+**Parameters**:
+- `role`: "driver" or "hitchhiker"
+- `origin`: Starting location
+- `destination`: Destination
+- `days`: Array of days (for drivers)
+- `departure_time`: Departure time
+- `return_time`: Return time (drivers)
+- `available_seats`: Number of seats (drivers)
+- `travel_date`: Specific date (hitchhikers)
+- `flexibility`: Time flexibility (hitchhikers)
+- `notes`: Additional information
+
+## Environment Variables Reference
+
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `GEMINI_API_KEY` | Gemini AI API key | Yes |
+| `WHATSAPP_TOKEN` | WhatsApp access token | Yes |
+| `WHATSAPP_PHONE_NUMBER_ID` | WhatsApp phone number ID | Yes |
+| `VERIFY_TOKEN` | Custom webhook verification token | Yes |
+| `GOOGLE_APPLICATION_CREDENTIALS` | Path to GCP service account JSON | Yes (local) |
+| `PORT` | Server port (default: 8080) | No |
+
+## Monitoring and Logs
+
+### View Cloud Run Logs
+
+```bash
+gcloud logging read "resource.type=cloud_run_revision AND resource.labels.service_name=hitchhiking-bot" --limit 50
+```
+
+### Common Issues
+
+**Issue**: Webhook verification fails
+- Solution: Ensure `VERIFY_TOKEN` matches exactly in both .env and WhatsApp configuration
+
+**Issue**: Firestore permission denied
+- Solution: Verify service account has `roles/datastore.user` role
+
+**Issue**: Gemini API rate limit
+- Solution: Implement request throttling or upgrade API quota
+
+## Security Best Practices
+
+1. **Never commit** `.env` or service account JSON files
+2. Use Google Secret Manager for production credentials
+3. Implement rate limiting for webhook endpoints
+4. Validate all incoming webhook requests
+5. Use HTTPS only (Cloud Run enforces this)
+
+## Cost Estimation
+
+### Google Cloud Services
+- **Cloud Run**: ~$0 for light usage (free tier: 2M requests/month)
+- **Firestore**: ~$0 for small communities (free tier: 1GB storage, 50K reads/day)
+- **Gemini API**: Check [current pricing](https://ai.google.dev/pricing)
+
+### WhatsApp Business API
+- Check [Meta's pricing](https://developers.facebook.com/docs/whatsapp/pricing)
+
+## Contributing
+
+Contributions are welcome! Please:
+1. Fork the repository
+2. Create a feature branch
+3. Submit a pull request with clear description
+
+## License
+
+MIT License - Feel free to use this for your community!
+
+## Support
+
+For issues or questions, please open a GitHub issue or contact the maintainer.
 
 ---
 
-## 🔒 אבטחה
+Built with ❤️ for the Gvar'am community
 
-- ✅ כל המפתחות ב-`.env` (לא בגיט!)
-- ✅ Webhook verification token
-- ✅ אימות בקשות מ-WhatsApp
-- ✅ נתוני משתמשים לא בגיט
-- ✅ לא שומר מספרי טלפון גלויים
 
----
-
-## 🤝 תרומה
-
-רוצה לתרום? נשמח!
-
-1. Fork the project
-2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
-
----
-
-## 📝 רישיון
-
-MIT License - ראה קובץ [LICENSE](LICENSE) לפרטים
-
----
-
-## 👨‍💻 יוצר
-
-**Hiker Bot** נוצר על ידי צוות פיתוח מסור 🚀
-
----
-
-## 🙏 תודות
-
-- [WhatsApp Cloud API](https://developers.facebook.com/docs/whatsapp/cloud-api) - API נהדר של Meta
-- [Flask](https://flask.palletsprojects.com/) - פריימוורק web מצוין
-- [ngrok](https://ngrok.com/) - כלי מעולה לפיתוח מקומי
-- [Python](https://www.python.org/) - השפה הכי טובה 🐍
-
----
-
-## 📞 יצירת קשר
-
-יש שאלות? בעיות? רעיונות?
-
-- 🐛 [פתח issue](https://github.com/YOUR_USERNAME/Hiker/issues)
-- 💡 [הצע feature](https://github.com/YOUR_USERNAME/Hiker/issues/new)
-- 📧 Email: your.email@example.com
-
----
-
-<div align="center">
-
-**עשוי עם ❤️ בישראל 🇮🇱**
-
-⭐ אם הפרויקט עזר לך - תן לנו כוכב! ⭐
-
-[⬆ חזרה למעלה](#-hiker---whatsapp-hitchhiking-bot)
-
-</div>

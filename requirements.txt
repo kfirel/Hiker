@@ -1,9 +1,16 @@
-Flask==3.0.0
-requests==2.31.0
-python-dotenv==1.0.0
-pyngrok==7.0.1
-pytest==7.4.3
-pyyaml==6.0.1
-pymongo==4.6.0
-mongomock==4.1.2
+# Production dependencies for Google Cloud Run
 
+# FastAPI and server
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+pydantic==2.5.3
+
+# Google Cloud services
+google-cloud-firestore==2.14.0
+google-generativeai==0.3.2
+
+# HTTP client
+requests==2.31.0
+
+# Environment variables (for local dev only)
+python-dotenv==1.0.0
