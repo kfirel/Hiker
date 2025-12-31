@@ -1,16 +1,16 @@
 # Production dependencies for Google Cloud Run
 
 # FastAPI and server
-fastapi==0.109.0
-uvicorn[standard]==0.27.0
-pydantic==2.5.3
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.6
 
 # Google Cloud services
-google-cloud-firestore==2.14.0
-google-generativeai==0.3.2
+google-cloud-firestore==2.20.0
+google-genai==1.0.0
 
 # HTTP client
-requests==2.31.0
+requests==2.32.3
 
 # Environment variables (for local dev only)
-python-dotenv==1.0.0
+python-dotenv==1.0.1

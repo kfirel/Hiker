@@ -19,10 +19,17 @@ WhatsApp User → Meta Cloud API → FastAPI Webhook → Gemini AI → Firestore
 
 ### Components
 
-1. **main.py**: FastAPI application with WhatsApp webhook handlers
-2. **agent.py**: Gemini AI integration with function calling
-3. **database.py**: Firestore operations for user data persistence
-4. **Dockerfile**: Container configuration for Cloud Run deployment
+1. **main.py**: FastAPI application with WhatsApp webhook handlers and AI integration
+2. **admin.py**: Secure admin API and testing utilities
+3. **Dockerfile**: Container configuration for Cloud Run deployment
+
+## 📚 Documentation
+
+- **[Architecture Guide](docs/ARCHITECTURE.md)**: Complete architecture documentation and design principles
+- **[Refactoring Guide](docs/REFACTORING_GUIDE.md)**: Details about the modular refactoring
+- **[Admin Guide](docs/ADMIN_GUIDE.md)**: Complete guide for admin features and testing
+- **[Migration Guide](docs/MIGRATION_GUIDE.md)**: Upgrade from old testing system
+- **[Changes Summary](docs/CHANGES_SUMMARY.md)**: Quick reference for recent changes
 
 ## Prerequisites
 
@@ -63,6 +70,9 @@ Required variables:
 - `WHATSAPP_PHONE_NUMBER_ID`: Your WhatsApp phone number ID
 - `VERIFY_TOKEN`: Custom token for webhook verification (you create this)
 - `GOOGLE_APPLICATION_CREDENTIALS`: Path to service account JSON
+- `ADMIN_TOKEN`: Token for admin API access (generate with `openssl rand -hex 32`)
+- `TESTING_MODE`: Enable/disable testing features (`true` or `false`)
+- `ADMIN_PHONE_NUMBERS`: Comma-separated phone numbers for WhatsApp admin commands
 
 ### 3. Set Up Google Cloud Firestore
 
@@ -205,6 +215,9 @@ The bot uses Gemini's function calling feature to extract structured data:
 | `WHATSAPP_PHONE_NUMBER_ID` | WhatsApp phone number ID | Yes |
 | `VERIFY_TOKEN` | Custom webhook verification token | Yes |
 | `GOOGLE_APPLICATION_CREDENTIALS` | Path to GCP service account JSON | Yes (local) |
+| `ADMIN_TOKEN` | Admin API authentication token | Yes (for admin features) |
+| `TESTING_MODE` | Enable testing features (`true`/`false`) | No (default: `false`) |
+| `ADMIN_PHONE_NUMBERS` | Whitelisted phones for admin commands | No |
 | `PORT` | Server port (default: 8080) | No |
 
 ## Monitoring and Logs
@@ -243,6 +256,33 @@ gcloud logging read "resource.type=cloud_run_revision AND resource.labels.servic
 
 ### WhatsApp Business API
 - Check [Meta's pricing](https://developers.facebook.com/docs/whatsapp/pricing)
+
+## Admin & Testing Features
+
+The bot includes a secure admin system for testing and management:
+
+- **Admin API**: REST endpoints with token authentication
+- **WhatsApp Commands**: Convenient admin commands for testing
+- **Testing Mode**: Can be enabled/disabled per environment
+
+**Quick Start:**
+```bash
+# Generate admin token
+openssl rand -hex 32
+
+# Add to .env
+ADMIN_TOKEN=your_generated_token
+TESTING_MODE=true
+ADMIN_PHONE_NUMBERS=972501234567
+
+# Test via WhatsApp
+/admin:help
+
+# Or test via API
+curl -H "X-Admin-Token: your_token" http://localhost:8080/admin/health
+```
+
+**Full Documentation:** See [docs/ADMIN_GUIDE.md](docs/ADMIN_GUIDE.md)
 
 ## Contributing
 

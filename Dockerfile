@@ -12,8 +12,14 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY main.py .
-COPY database.py .
-COPY agent.py .
+COPY admin.py .
+COPY config.py .
+
+# Copy modules
+COPY models/ ./models/
+COPY database/ ./database/
+COPY services/ ./services/
+COPY webhooks/ ./webhooks/
 
 # Set environment variables
 ENV PORT=8080
