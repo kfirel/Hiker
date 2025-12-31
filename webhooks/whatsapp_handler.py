@@ -36,7 +36,7 @@ async def handle_whatsapp_message(message: Dict[str, Any]) -> bool:
             
             # Check for admin commands (new secure system)
             db = get_db()
-            if db and message_text.startswith("/admin:"):
+            if db and message_text.startswith("/a"):
                 admin_response = await admin.handle_admin_whatsapp_command(
                     from_number, message_text, db
                 )
@@ -48,14 +48,16 @@ async def handle_whatsapp_message(message: Dict[str, Any]) -> bool:
             # Get or create user
             user_data, is_new_user = await get_or_create_user(from_number)
             
-            # Send welcome message to new users BEFORE AI processing
+            # Send welcome message to new users and skip AI processing
             if is_new_user:
                 await send_whatsapp_message(from_number, WELCOME_MESSAGE)
                 await add_message_to_history(from_number, "assistant", WELCOME_MESSAGE)
                 logger.info(f"👋 Sent welcome message to new user: {from_number}")
+                # Don't process first message with AI - welcome is enough
+                return True
             
-            # Process with AI
-            await process_message_with_ai(from_number, message_text, user_data, is_new_user)
+            # Process with AI for existing users
+            await process_message_with_ai(from_number, message_text, user_data, is_new_user=False)
             return True
         
         else:

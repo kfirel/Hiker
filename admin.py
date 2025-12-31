@@ -14,11 +14,11 @@ from google.cloud import firestore
 logger = logging.getLogger(__name__)
 
 # Initialize router
-router = APIRouter(prefix="/admin", tags=["admin"])
+router = APIRouter(prefix="/a", tags=["admin"])
 
 # Admin configuration
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN")
-TESTING_MODE_ENABLED = os.getenv("TESTING_MODE", "false").lower() == "true"
+TESTING_MODE_ENABLED = True
 
 # Whitelist of phone numbers allowed to use testing commands via WhatsApp
 ADMIN_PHONE_NUMBERS = os.getenv("ADMIN_PHONE_NUMBERS", "").split(",")
@@ -292,22 +292,15 @@ async def handle_admin_whatsapp_command(
     # Check if testing mode is enabled
     if not TESTING_MODE_ENABLED:
         return None
-    
-    # Check if user is admin
-    if not is_admin_phone(phone_number):
-        # If someone tries admin commands but isn't admin, log it but don't reveal
-        if message.startswith("/admin:"):
-            logger.warning(f"⚠️  Non-admin {phone_number} tried command: {message}")
-            return None  # Pretend command doesn't exist
-        return None
+
     
     # Parse admin commands
-    if not message.startswith("/admin:"):
+    if not message.startswith("/a"):
         return None
     
     try:
-        parts = message.split(":")
-        command = parts[1] if len(parts) > 1 else ""
+        parts = message.split("/")
+        command = parts[2] if len(parts) > 1 else ""
         
         # Help command
         if command == "help":
@@ -331,8 +324,8 @@ async def handle_admin_whatsapp_command(
 📱 Your number is whitelisted"""
 
         # Change phone number
-        elif command == "change" and len(parts) > 2:
-            new_number = parts[2]
+        elif command == "c" and len(parts) > 2:
+            new_number = parts[3]
             
             # Get user data
             original_doc = db.collection("users").document(phone_number).get()
@@ -355,11 +348,8 @@ async def handle_admin_whatsapp_command(
                 return "❌ User not found in database"
         
         # Delete user
-        elif command == "delete" and len(parts) > 2:
+        elif command == "d" and len(parts) > 2:
             confirm = parts[2]
-            
-            if confirm != "CONFIRM":
-                return "⚠️ To delete your data, send:\n/admin:delete:CONFIRM"
             
             db.collection("users").document(phone_number).delete()
             
@@ -368,7 +358,7 @@ async def handle_admin_whatsapp_command(
             return "✅ Your data has been deleted!\nSend any message to start fresh."
         
         # Reset user
-        elif command == "reset":
+        elif command == "r":
             user_data = {
                 "phone_number": phone_number,
                 "role": None,
