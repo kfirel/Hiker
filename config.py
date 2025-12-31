@@ -184,8 +184,8 @@ DEFAULT_FLEXIBILITY = "flexible"
 DEFAULT_NOTIFICATION_LEVEL = "all"
 
 # Chat history settings
-MAX_CHAT_HISTORY = 5
-MAX_CONVERSATION_CONTEXT = 4  # Number of messages to send to AI
+MAX_CHAT_HISTORY = 20  # Maximum messages stored in database
+MAX_CONVERSATION_CONTEXT = 20  # Number of messages to send to AI
 
 # Error messages
 ERROR_MESSAGE_HEBREW = "סליחה, נתקלתי בבעיה. אנא נסה שוב. 🙏"

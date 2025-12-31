@@ -16,10 +16,30 @@ import admin
 from database import initialize_db, get_db, get_or_create_user
 from webhooks import handle_whatsapp_message
 
+# Configure logging for Cloud Run
+import json
+import sys
+
+class CloudRunFormatter(logging.Formatter):
+    """Format logs as JSON for Cloud Run"""
+    def format(self, record):
+        log_obj = {
+            "severity": record.levelname,
+            "message": record.getMessage(),
+            "timestamp": self.formatTime(record, self.datefmt),
+            "logger": record.name,
+        }
+        if record.exc_info:
+            log_obj["exception"] = self.formatException(record.exc_info)
+        return json.dumps(log_obj)
+
 # Configure logging
+handler = logging.StreamHandler(sys.stdout)
+handler.setFormatter(CloudRunFormatter())
+
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    handlers=[handler]
 )
 logger = logging.getLogger(__name__)
 
