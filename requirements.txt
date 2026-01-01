@@ -15,5 +15,8 @@ requests==2.32.3
 # Date and time handling
 python-dateutil==2.8.2
 
+# Fuzzy string matching for destinations
+rapidfuzz==3.6.1
+
 # Environment variables (for local dev only)
 python-dotenv==1.0.1

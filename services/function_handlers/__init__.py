@@ -323,7 +323,7 @@ async def handle_delete_user_record(phone_number: str, arguments: Dict) -> Dict:
     }
 
 async def handle_delete_all_user_records(phone_number: str, arguments: Dict) -> Dict:
-    """Handle delete_all_user_records function call - delete all records of a type"""
+    """Handle delete_all_user_records function call - delete all records of a type or everything"""
     from database import remove_user_ride_or_request, get_user_rides_and_requests
     
     role = arguments.get("role")
@@ -334,6 +334,39 @@ async def handle_delete_all_user_records(phone_number: str, arguments: Dict) -> 
     # Get user's records
     data = await get_user_rides_and_requests(phone_number)
     
+    # Handle "all" - delete both drivers and hitchhikers
+    if role == "all":
+        driver_records = data.get("driver_rides", [])
+        hitchhiker_records = data.get("hitchhiker_requests", [])
+        
+        if not driver_records and not hitchhiker_records:
+            return {"status": "success", "message": "אין לך נסיעות למחוק"}
+        
+        # Delete all driver rides
+        deleted_drivers = 0
+        for record in driver_records:
+            record_id = record.get("id")
+            if record_id:
+                success = await remove_user_ride_or_request(phone_number, "driver", record_id)
+                if success:
+                    deleted_drivers += 1
+        
+        # Delete all hitchhiker requests
+        deleted_hitchhikers = 0
+        for record in hitchhiker_records:
+            record_id = record.get("id")
+            if record_id:
+                success = await remove_user_ride_or_request(phone_number, "hitchhiker", record_id)
+                if success:
+                    deleted_hitchhikers += 1
+        
+        total_deleted = deleted_drivers + deleted_hitchhikers
+        return {
+            "status": "success",
+            "message": f"כל הנסיעות נמחקו בהצלחה! ✅\n🚗 {deleted_drivers} טרמפים נמחקו\n🎒 {deleted_hitchhikers} בקשות נמחקו\n\n📋 אין לך נסיעות פעילות"
+        }
+    
+    # Handle specific role
     if role == "driver":
         records = data.get("driver_rides", [])
         record_type = "טרמפים"
