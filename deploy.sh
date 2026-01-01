@@ -55,14 +55,18 @@ gcloud run deploy hitchhiking-bot \
   --platform managed \
   --region us-central1 \
   --allow-unauthenticated \
+  --port 8080 \
   --set-env-vars GEMINI_API_KEY=$GEMINI_API_KEY \
   --set-env-vars WHATSAPP_TOKEN=$WHATSAPP_TOKEN \
   --set-env-vars WHATSAPP_PHONE_NUMBER_ID=$WHATSAPP_PHONE_NUMBER_ID \
   --set-env-vars VERIFY_TOKEN=$VERIFY_TOKEN \
+  --set-env-vars GOOGLE_CLOUD_PROJECT=$PROJECT_ID \
   --memory 512Mi \
   --cpu 1 \
-  --timeout 60 \
-  --max-instances 10
+  --timeout 300 \
+  --max-instances 10 \
+  --min-instances 0 \
+  --startup-cpu-boost
 
 # Get the service URL
 SERVICE_URL=$(gcloud run services describe hitchhiking-bot --platform managed --region us-central1 --format 'value(status.url)')

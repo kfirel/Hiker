@@ -19,7 +19,8 @@ COPY config.py .
 COPY models/ ./models/
 COPY database/ ./database/
 COPY services/ ./services/
-COPY whatsapp/ ./webhooks/
+COPY whatsapp/ ./whatsapp/
+COPY webhooks/ ./webhooks/
 
 # Set environment variables
 ENV PORT=8080

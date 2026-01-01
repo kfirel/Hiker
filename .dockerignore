@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.cursor/
+
+# Environment files
+.env
+.env.local
+*.env
+
+# Git
+.git/
+.gitignore
+
+# Documentation
+docs/
+*.md
+!README.md
+
+# Test files
+test_*.py
+test_*.sh
+*_test.py
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# CI/CD
+.github/
+cloudbuild.yaml
+deploy.sh
+
