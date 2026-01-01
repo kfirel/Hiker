@@ -504,3 +504,12 @@ async def handle_update_user_record(phone_number: str, arguments: Dict) -> Dict:
     msg += f"\n\n📋 הנסיעות שלך עכשיו:\n\n{list_msg}"
     
     return {"status": "success", "message": msg}
+
+async def handle_show_help() -> Dict:
+    """Handle show_help function call - display help message to user"""
+    from config import HELP_MESSAGE
+    
+    return {
+        "status": "success",
+        "message": HELP_MESSAGE
+    }

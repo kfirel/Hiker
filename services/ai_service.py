@@ -156,6 +156,10 @@ SYSTEM_PROMPT = """אתה עוזר חכם למערכת טרמפים של גבר�
 אתה: [קורא ל-update_user_records עם: role="hitchhiker", origin="אשדוד", destination="גברעם", travel_date="2026-01-02", departure_time="08:00"]
 הסבר: "בזמן הקרוב" = היום, שעה קרובה (ברירת מחדל 08:00 אם לא צוין). "מאשדוד" = origin
 
+דוגמה 14 - בקשת עזרה:
+משתמש: "עזרה" / "help" / "מה אפשר לעשות" / "איך זה עובד" / "הסבר" / "תעזור לי"
+אתה: [קורא ל-show_help]
+
 חשוב: 
 - אל תכתב את שם הפונקציה בטקסט! תקרא לפונקציה ישירות!
 - לעדכון ומחיקה: המשתמש צריך לדעת את המספר מהרשימה (view_user_records)
@@ -284,6 +288,15 @@ FUNCTIONS = [
             },
             "required": ["role", "record_number"]
         }
+    },
+    {
+        "name": "show_help",
+        "description": "הצגת הודעת עזרה מפורטת למשתמש. קרא לזה כשהמשתמש מבקש עזרה, הסבר על המערכת, או שואל מה אפשר לעשות",
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
     }
 ]
 
@@ -296,7 +309,8 @@ async def process_message_with_ai(phone_number: str, message_text: str, user_dat
         handle_view_user_records,
         handle_delete_user_record,
         handle_delete_all_user_records,
-        handle_update_user_record
+        handle_update_user_record,
+        handle_show_help
     )
     from utils import get_israel_now
     
@@ -356,6 +370,8 @@ async def process_message_with_ai(phone_number: str, message_text: str, user_dat
                 result = await handle_delete_all_user_records(phone_number, func_args)
             elif func_name == "update_user_record":
                 result = await handle_update_user_record(phone_number, func_args)
+            elif func_name == "show_help":
+                result = await handle_show_help()
             else:
                 result = {"message": "פונקציה לא מוכרת"}
             
