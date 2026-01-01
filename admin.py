@@ -5,11 +5,11 @@ Secure endpoints and commands for testing and management
 
 import os
 import logging
-from datetime import datetime
 from typing import Optional, List
 from fastapi import APIRouter, Header, HTTPException, Depends
 from pydantic import BaseModel
 from google.cloud import firestore
+from utils.timezone_utils import israel_now_isoformat
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +114,7 @@ async def change_user_phone_number(
         # Copy data to new phone number
         user_data = original_doc.to_dict()
         user_data["phone_number"] = new_phone
-        user_data["last_seen"] = datetime.utcnow().isoformat()
+        user_data["last_seen"] = israel_now_isoformat()
         
         # Create new document
         db.collection("users").document(new_phone).set(user_data)
@@ -205,8 +205,8 @@ async def create_test_user(
             "notification_level": "all",
             "driver_rides": request.driver_rides or [],
             "hitchhiker_requests": request.hitchhiker_requests or [],
-            "created_at": datetime.utcnow().isoformat(),
-            "last_seen": datetime.utcnow().isoformat(),
+            "created_at": israel_now_isoformat(),
+            "last_seen": israel_now_isoformat(),
             "chat_history": []
         }
         
@@ -334,7 +334,7 @@ async def handle_admin_whatsapp_command(
             if original_doc.exists:
                 user_data = original_doc.to_dict()
                 user_data["phone_number"] = new_number
-                user_data["last_seen"] = datetime.utcnow().isoformat()
+                user_data["last_seen"] = israel_now_isoformat()
                 
                 # Create new document
                 db.collection("users").document(new_number).set(user_data)
@@ -365,8 +365,8 @@ async def handle_admin_whatsapp_command(
                 "notification_level": "all",
                 "driver_rides": [],
                 "hitchhiker_requests": [],
-                "created_at": datetime.utcnow().isoformat(),
-                "last_seen": datetime.utcnow().isoformat(),
+                "created_at": israel_now_isoformat(),
+                "last_seen": israel_now_isoformat(),
                 "chat_history": []
             }
             

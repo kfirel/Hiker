@@ -1,8 +1,8 @@
 """Function handlers for AI function calls"""
 import logging
 from typing import Dict, List
-from datetime import datetime
 import uuid
+from utils.timezone_utils import israel_now_isoformat
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +103,7 @@ async def handle_update_user_records(phone_number: str, arguments: Dict) -> Dict
             "destination": destination_val,
             "name": user_name,
             "active": True,
-            "created_at": datetime.utcnow().isoformat(),
+            "created_at": israel_now_isoformat(),
         }
         
         if role == "driver":

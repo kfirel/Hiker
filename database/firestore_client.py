@@ -4,9 +4,9 @@ Handles all user data persistence for the hitchhiking bot
 """
 
 import logging
-from datetime import datetime
 from typing import Optional, Tuple, List, Dict, Any
 from google.cloud import firestore
+from utils.timezone_utils import israel_now_isoformat
 
 from config import (
     GOOGLE_CLOUD_PROJECT,
@@ -77,8 +77,8 @@ async def get_or_create_user(phone_number: str, name: Optional[str] = None) -> T
                 "notification_level": DEFAULT_NOTIFICATION_LEVEL,
                 "driver_rides": [],
                 "hitchhiker_requests": [],
-                "created_at": datetime.utcnow().isoformat(),
-                "last_seen": datetime.utcnow().isoformat(),
+                "created_at": israel_now_isoformat(),
+                "last_seen": israel_now_isoformat(),
                 "chat_history": []
             }
             doc_ref.set(user_data)
@@ -117,7 +117,7 @@ async def add_message_to_history(phone_number: str, role: str, content: str) -> 
         chat_history.append({
             "role": role,
             "content": content,
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": israel_now_isoformat()
         })
         
         # Keep only last N messages
@@ -125,7 +125,7 @@ async def add_message_to_history(phone_number: str, role: str, content: str) -> 
         
         doc_ref.update({
             "chat_history": chat_history,
-            "last_seen": datetime.utcnow().isoformat()
+            "last_seen": israel_now_isoformat()
         })
         
         return True
@@ -158,7 +158,7 @@ async def update_user_role_and_data(
         
         update_data = {
             "role": role,
-            "last_seen": datetime.utcnow().isoformat()
+            "last_seen": israel_now_isoformat()
         }
         
         if role == "driver":
@@ -205,8 +205,8 @@ async def add_user_ride_or_request(
                 "notification_level": DEFAULT_NOTIFICATION_LEVEL,
                 "driver_rides": [ride_data] if ride_type == "driver" else [],
                 "hitchhiker_requests": [ride_data] if ride_type == "hitchhiker" else [],
-                "created_at": datetime.utcnow().isoformat(),
-                "last_seen": datetime.utcnow().isoformat(),
+                "created_at": israel_now_isoformat(),
+                "last_seen": israel_now_isoformat(),
                 "chat_history": []
             }
             doc_ref.set(user_data)
@@ -236,7 +236,7 @@ async def add_user_ride_or_request(
                 driver_rides.append(ride_data)
                 doc_ref.update({
                     "driver_rides": driver_rides,
-                    "last_seen": datetime.utcnow().isoformat()
+                    "last_seen": israel_now_isoformat()
                 })
             else:
                 destination = ride_data.get("destination", "")
@@ -269,7 +269,7 @@ async def add_user_ride_or_request(
                 hitchhiker_requests.append(ride_data)
                 doc_ref.update({
                     "hitchhiker_requests": hitchhiker_requests,
-                    "last_seen": datetime.utcnow().isoformat()
+                    "last_seen": israel_now_isoformat()
                 })
             else:
                 destination = ride_data.get("destination", "")

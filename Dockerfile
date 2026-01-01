@@ -21,6 +21,7 @@ COPY database/ ./database/
 COPY services/ ./services/
 COPY whatsapp/ ./whatsapp/
 COPY webhooks/ ./webhooks/
+COPY utils/ ./utils/
 
 # Set environment variables
 ENV PORT=8080

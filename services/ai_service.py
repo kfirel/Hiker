@@ -298,14 +298,14 @@ async def process_message_with_ai(phone_number: str, message_text: str, user_dat
         handle_delete_all_user_records,
         handle_update_user_record
     )
-    from datetime import datetime
+    from utils import get_israel_now
     
     if not GEMINI_API_KEY:
         await send_whatsapp_message(phone_number, "מצטער, שירות ה-AI לא זמין כרגע")
         return
     
-    # Add current date/time context for the AI
-    now = datetime.now()
+    # Add current date/time context for the AI (Israel timezone)
+    now = get_israel_now()
     current_context = f"\n\n[מידע נוכחי: תאריך היום: {now.strftime('%Y-%m-%d')}, שעה: {now.strftime('%H:%M')}, יום: {now.strftime('%A')}]"
     
     # Build chat history
