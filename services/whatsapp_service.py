@@ -27,6 +27,11 @@ async def send_whatsapp_message(phone_number: str, message: str) -> bool:
             logger.warning("WhatsApp credentials not configured")
             return False
         
+        # Log outgoing message
+        logger.info(f"📤 ═══ SENDING TO WHATSAPP ═══")
+        logger.info(f"📱 To: {phone_number}")
+        logger.info(f"💬 Message ({len(message)} chars):\n{message}")
+        
         headers = {
             "Authorization": f"Bearer {WHATSAPP_TOKEN}",
             "Content-Type": "application/json"
@@ -42,10 +47,12 @@ async def send_whatsapp_message(phone_number: str, message: str) -> bool:
         response = requests.post(WHATSAPP_API_URL, headers=headers, json=payload)
         response.raise_for_status()
         
-        logger.info(f"✅ Message sent to {phone_number}")
+        logger.info(f"✅ WhatsApp API Response: {response.status_code}")
         return True
     
     except Exception as e:
-        logger.error(f"❌ Error sending message: {str(e)}")
+        logger.error(f"❌ Error sending WhatsApp message: {str(e)}")
         return False
+
+
 

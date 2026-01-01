@@ -19,6 +19,7 @@ from webhooks import handle_whatsapp_message
 # Configure logging for Cloud Run
 import json
 import sys
+import os
 
 class CloudRunFormatter(logging.Formatter):
     """Format logs as JSON for Cloud Run"""
@@ -31,17 +32,34 @@ class CloudRunFormatter(logging.Formatter):
         }
         if record.exc_info:
             log_obj["exception"] = self.formatException(record.exc_info)
-        return json.dumps(log_obj)
+        return json.dumps(log_obj, ensure_ascii=False)
+
+# Check if running in Cloud Run (has K_SERVICE env var)
+IS_CLOUD_RUN = os.getenv("K_SERVICE") is not None
 
 # Configure logging
 handler = logging.StreamHandler(sys.stdout)
-handler.setFormatter(CloudRunFormatter())
+
+if IS_CLOUD_RUN:
+    # Production: JSON format for Cloud Run
+    handler.setFormatter(CloudRunFormatter())
+else:
+    # Development: Human-readable format
+    formatter = logging.Formatter(
+        '%(asctime)s | %(levelname)-8s | %(name)-25s | %(message)s',
+        datefmt='%H:%M:%S'
+    )
+    handler.setFormatter(formatter)
 
 logging.basicConfig(
     level=logging.INFO,
     handlers=[handler]
 )
 logger = logging.getLogger(__name__)
+
+# Disable uvicorn access logs
+logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+logging.getLogger("uvicorn.access").propagate = False
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -93,8 +111,6 @@ async def verify_webhook(request: Request):
     token = request.query_params.get("hub.verify_token")
     challenge = request.query_params.get("hub.challenge")
     
-    logger.info(f"Webhook verification request - mode: {mode}")
-    
     if mode == "subscribe" and token == VERIFY_TOKEN:
         logger.info("✅ Webhook verified successfully!")
         return Response(content=challenge, media_type="text/plain")
@@ -108,7 +124,6 @@ async def handle_webhook(request: Request):
     """Handle incoming WhatsApp messages"""
     try:
         body = await request.json()
-        logger.info(f"📥 Received webhook")
         
         if not body.get("entry"):
             return JSONResponse(content={"status": "ok"})
@@ -123,10 +138,20 @@ async def handle_webhook(request: Request):
                 if "messages" not in value:
                     continue
                 
+                # Extract contact information (includes user's name)
+                contacts = value.get("contacts", [])
+                contact_map = {contact.get("wa_id"): contact for contact in contacts}
+                
                 messages = value["messages"]
                 
                 # Handle each message
                 for message in messages:
+                    # Attach contact info to message if available
+                    from_number = message.get("from")
+                    if from_number in contact_map:
+                        contact_profile = contact_map[from_number].get("profile", {})
+                        message["_contact_name"] = contact_profile.get("name")
+                    
                     await handle_whatsapp_message(message)
         
         return JSONResponse(content={"status": "ok"})
@@ -149,13 +174,15 @@ async def list_users():
         
         for doc in docs:
             user_data = doc.to_dict()
+            driver_rides = user_data.get("driver_rides", [])
+            hitchhiker_requests = user_data.get("hitchhiker_requests", [])
             users.append({
                 "phone_number": user_data.get("phone_number"),
-                "role": user_data.get("role"),
+                "name": user_data.get("name"),
+                "active_driver_rides": len([r for r in driver_rides if r.get("active", True)]),
+                "active_hitchhiker_requests": len([r for r in hitchhiker_requests if r.get("active", True)]),
                 "message_count": len(user_data.get("chat_history", [])),
-                "last_seen": user_data.get("last_seen"),
-                "driver_data": user_data.get("driver_data", {}),
-                "hitchhiker_data": user_data.get("hitchhiker_data", {})
+                "last_seen": user_data.get("last_seen")
             })
         
         return {"users": users, "count": len(users)}
@@ -191,5 +218,12 @@ if __name__ == "__main__":
     logger.info(f"   VERIFY_TOKEN: {'✅' if VERIFY_TOKEN else '❌'}")
     logger.info(f"   GEMINI_API_KEY: {'✅' if GEMINI_API_KEY else '❌'}")
     
-    uvicorn.run(app, host="0.0.0.0", port=PORT)
+    # Disable uvicorn access logs (HTTP request logs)
+    uvicorn.run(
+        app, 
+        host="0.0.0.0", 
+        port=PORT,
+        access_log=False,  # Disable "POST /webhook HTTP/1.1" logs
+        log_level="warning"  # Only show warnings and errors from uvicorn
+    )
 

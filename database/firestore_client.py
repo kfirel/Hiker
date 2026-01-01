@@ -43,43 +43,50 @@ def get_db() -> Optional[firestore.Client]:
     return _db
 
 
-async def get_or_create_user(phone_number: str) -> Tuple[Dict[str, Any], bool]:
+async def get_or_create_user(phone_number: str, name: Optional[str] = None) -> Tuple[Dict[str, Any], bool]:
     """
     Get user from Firestore or create if doesn't exist
     
     Args:
         phone_number: User's phone number (document ID)
+        name: User's WhatsApp profile name (optional)
     
     Returns:
         tuple: (user_data, is_new_user)
     """
     if not _db:
-        return {"phone_number": phone_number, "chat_history": []}, False
+        return {"phone_number": phone_number, "name": name, "chat_history": []}, False
     
     try:
         doc_ref = _db.collection("users").document(phone_number)
         doc = doc_ref.get()
         
         if doc.exists:
-            return doc.to_dict(), False
+            user_data = doc.to_dict()
+            
+            # Update name if provided and different from stored name
+            if name and user_data.get("name") != name:
+                doc_ref.update({"name": name})
+                user_data["name"] = name
+            
+            return user_data, False
         else:
             user_data = {
                 "phone_number": phone_number,
-                "role": None,
+                "name": name,
                 "notification_level": DEFAULT_NOTIFICATION_LEVEL,
-                "driver_data": {},
-                "hitchhiker_data": {},
+                "driver_rides": [],
+                "hitchhiker_requests": [],
                 "created_at": datetime.utcnow().isoformat(),
                 "last_seen": datetime.utcnow().isoformat(),
                 "chat_history": []
             }
             doc_ref.set(user_data)
-            logger.info(f"✅ Created new user: {phone_number}")
             return user_data, True
     except Exception as e:
         logger.error(f"❌ Error getting user: {str(e)}")
         # When DB fails, don't treat as new user to avoid spam
-        return {"phone_number": phone_number, "chat_history": []}, False
+        return {"phone_number": phone_number, "name": name, "chat_history": []}, False
 
 
 async def add_message_to_history(phone_number: str, role: str, content: str) -> bool:
@@ -160,7 +167,6 @@ async def update_user_role_and_data(
             update_data["hitchhiker_data"] = role_data
         
         doc_ref.set(update_data, merge=True)
-        logger.info(f"✅ Updated {phone_number} as {role}")
         
         return True
     except Exception as e:
@@ -170,17 +176,17 @@ async def update_user_role_and_data(
 
 async def add_user_ride_or_request(
     phone_number: str,
-    role: str,
-    role_data: Dict[str, Any]
+    ride_type: str,  # 'driver' or 'hitchhiker' to indicate which list to add to
+    ride_data: Dict[str, Any]
 ) -> bool:
     """
     Add a new ride offer or hitchhiking request to user's list
-    Supports multiple active rides/requests per user
+    Users can have both driver rides and hitchhiker requests simultaneously
     
     Args:
         phone_number: User's phone number
-        role: User role ('driver' or 'hitchhiker')
-        role_data: Data for the new ride/request (must include 'id')
+        ride_type: Type of ride ('driver' or 'hitchhiker')
+        ride_data: Data for the new ride/request (must include 'id')
     
     Returns:
         True if successful, False otherwise
@@ -196,77 +202,62 @@ async def add_user_ride_or_request(
             # Create new user
             user_data = {
                 "phone_number": phone_number,
-                "role": role,
                 "notification_level": DEFAULT_NOTIFICATION_LEVEL,
-                "driver_rides": [] if role == "hitchhiker" else [role_data],
-                "hitchhiker_requests": [role_data] if role == "hitchhiker" else [],
-                "driver_data": {},  # Legacy field
-                "hitchhiker_data": {},  # Legacy field
+                "driver_rides": [ride_data] if ride_type == "driver" else [],
+                "hitchhiker_requests": [ride_data] if ride_type == "hitchhiker" else [],
                 "created_at": datetime.utcnow().isoformat(),
                 "last_seen": datetime.utcnow().isoformat(),
                 "chat_history": []
             }
             doc_ref.set(user_data)
-            logger.info(f"✅ Created new user {phone_number} with {role} entry")
             return True
         
         # Update existing user
         user_data = doc.to_dict()
         
-        # Update role (can be 'driver', 'hitchhiker', or 'both')
-        current_role = user_data.get("role")
-        if current_role and current_role != role:
-            new_role = "both"  # User is both driver and hitchhiker
-        else:
-            new_role = role
-        
         # Add to appropriate list
-        if role == "driver":
+        if ride_type == "driver":
             driver_rides = user_data.get("driver_rides", [])
             
             # Check for duplicate (same destination and time)
             is_duplicate = False
             for existing_ride in driver_rides:
-                if (existing_ride.get("destination") == role_data.get("destination") and 
-                    existing_ride.get("departure_time") == role_data.get("departure_time") and
+                if (existing_ride.get("destination") == ride_data.get("destination") and 
+                    existing_ride.get("departure_time") == ride_data.get("departure_time") and
                     existing_ride.get("active", True)):
                     is_duplicate = True
-                    logger.warning(f"⚠️ Skipping duplicate ride for {phone_number}: {role_data.get('destination')}")
+                    logger.warning(f"⚠️ Skipping duplicate ride for {phone_number}: {ride_data.get('destination')}")
                     break
             
             if not is_duplicate:
-                driver_rides.append(role_data)
+                driver_rides.append(ride_data)
                 doc_ref.update({
-                    "role": new_role,
                     "driver_rides": driver_rides,
                     "last_seen": datetime.utcnow().isoformat()
                 })
-                logger.info(f"✅ Added driver ride for {phone_number} (total: {len(driver_rides)})")
             else:
                 return False  # Duplicate detected
         
-        elif role == "hitchhiker":
+        elif ride_type == "hitchhiker":
             hitchhiker_requests = user_data.get("hitchhiker_requests", [])
             
             # Check for duplicate (same destination and date/time)
             is_duplicate = False
             for existing_request in hitchhiker_requests:
-                if (existing_request.get("destination") == role_data.get("destination") and 
-                    existing_request.get("travel_date") == role_data.get("travel_date") and
-                    existing_request.get("departure_time") == role_data.get("departure_time") and
+                if (existing_request.get("destination") == ride_data.get("destination") and 
+                    existing_request.get("travel_date") == ride_data.get("travel_date") and
+                    existing_request.get("departure_time") == ride_data.get("departure_time") and
                     existing_request.get("active", True)):
                     is_duplicate = True
-                    logger.warning(f"⚠️ Skipping duplicate request for {phone_number}: {role_data.get('destination')}")
+                    logger.warning(f"⚠️ Skipping duplicate request for {phone_number}: {ride_data.get('destination')}")
                     break
             
             if not is_duplicate:
-                hitchhiker_requests.append(role_data)
+                hitchhiker_requests.append(ride_data)
                 doc_ref.update({
-                    "role": new_role,
                     "hitchhiker_requests": hitchhiker_requests,
                     "last_seen": datetime.utcnow().isoformat()
                 })
-                logger.info(f"✅ Added hitchhiker request for {phone_number} (total: {len(hitchhiker_requests)})")
             else:
                 return False  # Duplicate detected
         
@@ -350,7 +341,6 @@ async def remove_user_ride_or_request(
             
             if updated:
                 doc_ref.update({"driver_rides": driver_rides})
-                logger.info(f"✅ Deactivated driver ride {ride_id} for {phone_number}")
                 return True
         
         elif role == "hitchhiker":
@@ -364,7 +354,6 @@ async def remove_user_ride_or_request(
             
             if updated:
                 doc_ref.update({"hitchhiker_requests": hitchhiker_requests})
-                logger.info(f"✅ Deactivated hitchhiker request {ride_id} for {phone_number}")
                 return True
         
         return False
@@ -392,19 +381,14 @@ async def get_drivers_by_route(
         return []
     
     try:
-        # Get all users (both "driver" and "both" roles)
+        # Get all users and check their driver_rides
         docs = _db.collection("users").stream()
         
         drivers = []
         for doc in docs:
             user_data = doc.to_dict()
-            role = user_data.get("role")
-            
-            # Skip if not a driver
-            if role not in ["driver", "both"]:
-                continue
-            
             phone_number = user_data.get("phone_number")
+            user_name = user_data.get("name")  # Get driver's name
             
             # Check new list-based structure
             driver_rides = user_data.get("driver_rides", [])
@@ -420,10 +404,12 @@ async def get_drivers_by_route(
                 
                 drivers.append({
                     "phone_number": phone_number,
+                    "name": user_name,  # Include driver's name
                     "destination": ride.get("destination"),
                     "days": ride.get("days", []),
                     "departure_time": ride.get("departure_time"),
                     "return_time": ride.get("return_time"),
+                    "auto_approve_matches": ride.get("auto_approve_matches", True),  # Include approval setting
                     "ride_id": ride.get("id")
                 })
             
@@ -437,14 +423,15 @@ async def get_drivers_by_route(
                 
                 drivers.append({
                     "phone_number": phone_number,
+                    "name": user_name,  # Include name for legacy data too
                     "destination": driver_info.get("destination"),
                     "days": driver_info.get("days", []),
                     "departure_time": driver_info.get("departure_time"),
                     "return_time": driver_info.get("return_time"),
+                    "auto_approve_matches": driver_info.get("auto_approve_matches", True),  # Include approval setting
                     "ride_id": "legacy"
                 })
         
-        logger.info(f"🚗 Found {len(drivers)} matching drivers")
         return drivers
     
     except Exception as e:
@@ -468,19 +455,14 @@ async def get_hitchhiker_requests(
         return []
     
     try:
-        # Get all users (both "hitchhiker" and "both" roles)
+        # Get all users and check their hitchhiker_requests
         docs = _db.collection("users").stream()
         
         hitchhikers = []
         for doc in docs:
             user_data = doc.to_dict()
-            role = user_data.get("role")
-            
-            # Skip if not a hitchhiker
-            if role not in ["hitchhiker", "both"]:
-                continue
-            
             phone_number = user_data.get("phone_number")
+            user_name = user_data.get("name")  # Get hitchhiker's name
             
             # Check new list-based structure
             hitchhiker_requests = user_data.get("hitchhiker_requests", [])
@@ -496,6 +478,7 @@ async def get_hitchhiker_requests(
                 
                 hitchhikers.append({
                     "phone_number": phone_number,
+                    "name": user_name,  # Include hitchhiker's name
                     "destination": request.get("destination"),
                     "travel_date": request.get("travel_date"),
                     "departure_time": request.get("departure_time"),
@@ -513,6 +496,7 @@ async def get_hitchhiker_requests(
                 
                 hitchhikers.append({
                     "phone_number": phone_number,
+                    "name": user_name,  # Include name for legacy data too
                     "destination": hitchhiker_info.get("destination"),
                     "travel_date": hitchhiker_info.get("travel_date"),
                     "departure_time": hitchhiker_info.get("departure_time"),
@@ -520,7 +504,6 @@ async def get_hitchhiker_requests(
                     "request_id": "legacy"
                 })
         
-        logger.info(f"🚶 Found {len(hitchhikers)} matching hitchhikers")
         return hitchhikers
     
     except Exception as e:

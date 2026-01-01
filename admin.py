@@ -6,7 +6,7 @@ Secure endpoints and commands for testing and management
 import os
 import logging
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 from fastapi import APIRouter, Header, HTTPException, Depends
 from pydantic import BaseModel
 from google.cloud import firestore
@@ -66,9 +66,9 @@ class DeleteUserRequest(BaseModel):
 
 class CreateTestUserRequest(BaseModel):
     phone_number: str
-    role: Optional[str] = None
-    driver_data: Optional[dict] = None
-    hitchhiker_data: Optional[dict] = None
+    name: Optional[str] = None
+    driver_rides: Optional[List[dict]] = None
+    hitchhiker_requests: Optional[List[dict]] = None
 
 
 # ============================================================================
@@ -188,8 +188,9 @@ async def create_test_user(
         Header: X-Admin-Token: your_secret_token
         Body: {
             "phone_number": "test123",
-            "role": "driver",
-            "driver_data": {"destination": "תל אביב", ...}
+            "name": "Test User",
+            "driver_rides": [{"destination": "תל אביב", ...}],
+            "hitchhiker_requests": []
         }
     """
     from database import get_db
@@ -200,10 +201,10 @@ async def create_test_user(
     try:
         user_data = {
             "phone_number": request.phone_number,
-            "role": request.role,
+            "name": request.name,
             "notification_level": "all",
-            "driver_data": request.driver_data or {},
-            "hitchhiker_data": request.hitchhiker_data or {},
+            "driver_rides": request.driver_rides or [],
+            "hitchhiker_requests": request.hitchhiker_requests or [],
             "created_at": datetime.utcnow().isoformat(),
             "last_seen": datetime.utcnow().isoformat(),
             "chat_history": []
@@ -361,10 +362,9 @@ async def handle_admin_whatsapp_command(
         elif command == "r":
             user_data = {
                 "phone_number": phone_number,
-                "role": None,
                 "notification_level": "all",
-                "driver_data": {},
-                "hitchhiker_data": {},
+                "driver_rides": [],
+                "hitchhiker_requests": [],
                 "created_at": datetime.utcnow().isoformat(),
                 "last_seen": datetime.utcnow().isoformat(),
                 "chat_history": []

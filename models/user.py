@@ -16,6 +16,7 @@ class DriverData(BaseModel):
     departure_time: Optional[str] = None
     return_time: Optional[str] = None
     notes: str = ""
+    auto_approve_matches: bool = True  # If True, send details automatically. If False, ask driver first.
     created_at: Optional[str] = None
     active: bool = True  # Can be set to False to deactivate without deleting
 
@@ -41,14 +42,12 @@ class ChatMessage(BaseModel):
 
 
 class User(BaseModel):
-    """Complete user model"""
+    """Complete user model - users can be both drivers and hitchhikers simultaneously"""
     phone_number: str
-    role: Optional[str] = None  # Can be "driver", "hitchhiker", or "both"
+    name: Optional[str] = None  # User's WhatsApp profile name
     notification_level: str = "all"
-    driver_data: Optional[DriverData] = None  # Deprecated - keeping for backward compatibility
-    hitchhiker_data: Optional[HitchhikerData] = None  # Deprecated - keeping for backward compatibility
-    driver_rides: List[DriverData] = Field(default_factory=list)  # New: Multiple driver offers
-    hitchhiker_requests: List[HitchhikerData] = Field(default_factory=list)  # New: Multiple requests
+    driver_rides: List[DriverData] = Field(default_factory=list)  # All driver ride offers
+    hitchhiker_requests: List[HitchhikerData] = Field(default_factory=list)  # All hitchhiker requests
     created_at: str
     last_seen: str
     chat_history: List[ChatMessage] = Field(default_factory=list)
@@ -57,13 +56,14 @@ class User(BaseModel):
         json_schema_extra = {
             "example": {
                 "phone_number": "972501234567",
-                "role": "driver",
+                "name": "John Doe",
                 "notification_level": "all",
-                "driver_data": {
+                "driver_rides": [{
                     "destination": "תל אביב",
                     "days": ["Sunday", "Monday"],
                     "departure_time": "09:00"
-                },
+                }],
+                "hitchhiker_requests": [],
                 "created_at": "2025-01-01T10:00:00",
                 "last_seen": "2025-01-01T10:00:00"
             }
