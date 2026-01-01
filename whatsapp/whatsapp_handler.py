@@ -51,42 +51,6 @@ async def handle_whatsapp_message(message: Dict[str, Any]) -> bool:
                     await send_whatsapp_message(from_number, admin_response)
                     return True
             
-            # Check for pending approval responses (BEFORE AI processing)
-            # This handles simple "כן"/"לא" responses automatically
-            from services.approval_service import check_and_handle_approval_response
-            approval_response = await check_and_handle_approval_response(from_number, message_text)
-            
-            if approval_response:
-                # Response was handled by approval system, no need for AI
-                await send_whatsapp_message(from_number, approval_response)
-                logger.info(f"✅ Approval handled automatically: {from_number}")
-                return True
-            
-            # SAFETY NET: Check if message has clear travel intent
-            # If AI fails to call function, we force it from code
-            from services.intent_detector import should_force_function_call, detect_travel_intent
-            
-            if should_force_function_call(message_text):
-                logger.warning(f"⚠️ SAFETY NET: Forcing function call for: {message_text}")
-                intent = detect_travel_intent(message_text)
-                
-                if intent:
-                    from services.function_handlers import handle_update_user_records
-                    
-                    try:
-                        result = await handle_update_user_records(from_number, intent)
-                        response_message = result.get("message", "נשמר!")
-                        
-                        await send_whatsapp_message(from_number, response_message)
-                        await add_message_to_history(from_number, "user", message_text)
-                        await add_message_to_history(from_number, "assistant", response_message)
-                        
-                        logger.info(f"✅ Safety net handled: {from_number}")
-                        return True
-                    except Exception as e:
-                        logger.error(f"❌ Safety net failed: {e}")
-                        # Fall through to AI processing
-            
             # Get or create user (with name)
             user_data, is_new_user = await get_or_create_user(from_number, user_name)
             

@@ -178,7 +178,7 @@ async def add_user_ride_or_request(
     phone_number: str,
     ride_type: str,  # 'driver' or 'hitchhiker' to indicate which list to add to
     ride_data: Dict[str, Any]
-) -> bool:
+) -> Dict[str, Any]:
     """
     Add a new ride offer or hitchhiking request to user's list
     Users can have both driver rides and hitchhiker requests simultaneously
@@ -189,10 +189,10 @@ async def add_user_ride_or_request(
         ride_data: Data for the new ride/request (must include 'id')
     
     Returns:
-        True if successful, False otherwise
+        Dict with 'success' (bool), 'is_duplicate' (bool), and optional 'message' (str)
     """
     if not _db:
-        return False
+        return {"success": False, "is_duplicate": False, "message": "שגיאת חיבור למסד נתונים"}
     
     try:
         doc_ref = _db.collection("users").document(phone_number)
@@ -210,7 +210,7 @@ async def add_user_ride_or_request(
                 "chat_history": []
             }
             doc_ref.set(user_data)
-            return True
+            return {"success": True, "is_duplicate": False}
         
         # Update existing user
         user_data = doc.to_dict()
@@ -226,7 +226,10 @@ async def add_user_ride_or_request(
                     existing_ride.get("departure_time") == ride_data.get("departure_time") and
                     existing_ride.get("active", True)):
                     is_duplicate = True
-                    logger.warning(f"⚠️ Skipping duplicate ride for {phone_number}: {ride_data.get('destination')}")
+                    destination = ride_data.get("destination", "")
+                    origin = ride_data.get("origin", "גברעם")
+                    time = ride_data.get("departure_time", "")
+                    logger.warning(f"⚠️ Duplicate ride detected for {phone_number}: מ{origin} ל{destination}")
                     break
             
             if not is_duplicate:
@@ -236,7 +239,14 @@ async def add_user_ride_or_request(
                     "last_seen": datetime.utcnow().isoformat()
                 })
             else:
-                return False  # Duplicate detected
+                destination = ride_data.get("destination", "")
+                origin = ride_data.get("origin", "גברעם")
+                time = ride_data.get("departure_time", "")
+                return {
+                    "success": False,
+                    "is_duplicate": True,
+                    "message": f"הנסיעה מ{origin} ל{destination} בשעה {time} כבר קיימת ברשימה שלך! 📋"
+                }
         
         elif ride_type == "hitchhiker":
             hitchhiker_requests = user_data.get("hitchhiker_requests", [])
@@ -249,7 +259,10 @@ async def add_user_ride_or_request(
                     existing_request.get("departure_time") == ride_data.get("departure_time") and
                     existing_request.get("active", True)):
                     is_duplicate = True
-                    logger.warning(f"⚠️ Skipping duplicate request for {phone_number}: {ride_data.get('destination')}")
+                    destination = ride_data.get("destination", "")
+                    origin = ride_data.get("origin", "גברעם")
+                    date = ride_data.get("travel_date", "")
+                    logger.warning(f"⚠️ Duplicate request detected for {phone_number}: מ{origin} ל{destination}")
                     break
             
             if not is_duplicate:
@@ -259,13 +272,21 @@ async def add_user_ride_or_request(
                     "last_seen": datetime.utcnow().isoformat()
                 })
             else:
-                return False  # Duplicate detected
+                destination = ride_data.get("destination", "")
+                origin = ride_data.get("origin", "גברעם")
+                date = ride_data.get("travel_date", "")
+                time = ride_data.get("departure_time", "")
+                return {
+                    "success": False,
+                    "is_duplicate": True,
+                    "message": f"הבקשה מ{origin} ל{destination} בתאריך {date} בשעה {time} כבר קיימת ברשימה שלך! 📋"
+                }
         
-        return True
+        return {"success": True, "is_duplicate": False}
     
     except Exception as e:
         logger.error(f"❌ Error adding ride/request: {str(e)}")
-        return False
+        return {"success": False, "is_duplicate": False, "message": f"שגיאה בשמירה: {str(e)}"}
 
 
 async def get_user_rides_and_requests(phone_number: str) -> Dict[str, Any]:
@@ -363,6 +384,75 @@ async def remove_user_ride_or_request(
         return False
 
 
+async def update_user_ride_or_request(
+    phone_number: str,
+    role: str,
+    ride_id: str,
+    updates: Dict[str, Any]
+) -> bool:
+    """
+    Update specific fields in an existing ride or request by ID
+    
+    Args:
+        phone_number: User's phone number
+        role: 'driver' or 'hitchhiker'
+        ride_id: The unique ID of the ride/request to update
+        updates: Dictionary of fields to update (e.g., {"departure_time": "15:00", "destination": "חיפה"})
+    
+    Returns:
+        True if successful, False otherwise
+    """
+    if not _db:
+        return False
+    
+    try:
+        doc_ref = _db.collection("users").document(phone_number)
+        doc = doc_ref.get()
+        
+        if not doc.exists:
+            return False
+        
+        user_data = doc.to_dict()
+        
+        if role == "driver":
+            driver_rides = user_data.get("driver_rides", [])
+            updated = False
+            for ride in driver_rides:
+                if ride.get("id") == ride_id:
+                    # Update only the provided fields
+                    for key, value in updates.items():
+                        ride[key] = value
+                    updated = True
+                    break
+            
+            if updated:
+                doc_ref.update({"driver_rides": driver_rides})
+                logger.info(f"✅ Updated driver ride {ride_id}")
+                return True
+        
+        elif role == "hitchhiker":
+            hitchhiker_requests = user_data.get("hitchhiker_requests", [])
+            updated = False
+            for request in hitchhiker_requests:
+                if request.get("id") == ride_id:
+                    # Update only the provided fields
+                    for key, value in updates.items():
+                        request[key] = value
+                    updated = True
+                    break
+            
+            if updated:
+                doc_ref.update({"hitchhiker_requests": hitchhiker_requests})
+                logger.info(f"✅ Updated hitchhiker request {ride_id}")
+                return True
+        
+        return False
+    
+    except Exception as e:
+        logger.error(f"❌ Error updating ride/request: {str(e)}")
+        return False
+
+
 async def get_drivers_by_route(
     origin: Optional[str] = None,
     destination: Optional[str] = None
@@ -405,8 +495,10 @@ async def get_drivers_by_route(
                 drivers.append({
                     "phone_number": phone_number,
                     "name": user_name,  # Include driver's name
+                    "origin": ride.get("origin", "גברעם"),  # Include origin
                     "destination": ride.get("destination"),
                     "days": ride.get("days", []),
+                    "travel_date": ride.get("travel_date"),  # Include travel_date for one-time rides
                     "departure_time": ride.get("departure_time"),
                     "return_time": ride.get("return_time"),
                     "auto_approve_matches": ride.get("auto_approve_matches", True),  # Include approval setting
@@ -424,8 +516,10 @@ async def get_drivers_by_route(
                 drivers.append({
                     "phone_number": phone_number,
                     "name": user_name,  # Include name for legacy data too
+                    "origin": driver_info.get("origin", "גברעם"),  # Include origin
                     "destination": driver_info.get("destination"),
                     "days": driver_info.get("days", []),
+                    "travel_date": driver_info.get("travel_date"),  # Include travel_date for one-time rides
                     "departure_time": driver_info.get("departure_time"),
                     "return_time": driver_info.get("return_time"),
                     "auto_approve_matches": driver_info.get("auto_approve_matches", True),  # Include approval setting
@@ -479,6 +573,7 @@ async def get_hitchhiker_requests(
                 hitchhikers.append({
                     "phone_number": phone_number,
                     "name": user_name,  # Include hitchhiker's name
+                    "origin": request.get("origin", "גברעם"),  # Include origin
                     "destination": request.get("destination"),
                     "travel_date": request.get("travel_date"),
                     "departure_time": request.get("departure_time"),
@@ -497,6 +592,7 @@ async def get_hitchhiker_requests(
                 hitchhikers.append({
                     "phone_number": phone_number,
                     "name": user_name,  # Include name for legacy data too
+                    "origin": hitchhiker_info.get("origin", "גברעם"),  # Include origin
                     "destination": hitchhiker_info.get("destination"),
                     "travel_date": hitchhiker_info.get("travel_date"),
                     "departure_time": hitchhiker_info.get("departure_time"),

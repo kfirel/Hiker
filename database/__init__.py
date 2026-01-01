@@ -11,6 +11,7 @@ from .firestore_client import (
     add_user_ride_or_request,
     get_user_rides_and_requests,
     remove_user_ride_or_request,
+    update_user_ride_or_request,
     get_drivers_by_route,
     get_hitchhiker_requests
 )
@@ -24,6 +25,7 @@ __all__ = [
     "add_user_ride_or_request",
     "get_user_rides_and_requests",
     "remove_user_ride_or_request",
+    "update_user_ride_or_request",
     "get_drivers_by_route",
     "get_hitchhiker_requests"
 ]
