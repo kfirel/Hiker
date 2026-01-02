@@ -1,13 +1,3 @@
-# Environment variables
-.env
-.env.local
-.env.*.local
-
-# Google Cloud
-*.json
-service-account*.json
-google-credentials*.json
-
 # Python
 __pycache__/
 *.py[cod]
@@ -30,11 +20,17 @@ wheels/
 .installed.cfg
 *.egg
 
-# Virtual environments
+# Virtual Environment
 venv/
 env/
 ENV/
 .venv
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+*.env
 
 # IDE
 .vscode/
@@ -44,19 +40,58 @@ ENV/
 *~
 .DS_Store
 
-# Logs
-*.log
-logs/
+# Jupyter Notebook
+.ipynb_checkpoints
 
-# Testing
-.pytest_cache/
-.coverage
-htmlcov/
+# Test outputs
+tests/outputs/*.html
+tests/outputs/*.png
+tests/outputs/*.jpg
+
+# Logs
+logs/*.log
+logs/*.txt
+*.log
+*.txt
 
 # Temporary files
 *.tmp
-.cache/
+*.temp
+.archive/
 
+# Google Cloud
+.gcloudignore
+service-account.json
+*-key.json
 
+# Database
+*.db
+*.sqlite
+*.sqlite3
 
+# OS
+.DS_Store
+Thumbs.db
 
+# Coverage reports
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# Backup files
+*.bak
+*.backup
+*~
+
+# Don't ignore data files
+!data/city.geojson
+
+# Don't ignore README files
+!**/README.md

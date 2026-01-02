@@ -33,9 +33,13 @@ def _format_user_records_list(driver_rides: List[Dict], hitchhiker_requests: Lis
     
     msg = ""
     
+    # 🔄 Reverse lists so newest items appear first
+    driver_rides_reversed = list(reversed(driver_rides))
+    hitchhiker_requests_reversed = list(reversed(hitchhiker_requests))
+    
     if driver_rides:
         msg += "🚗 אני נוסע:\n"
-        for i, ride in enumerate(driver_rides, 1):
+        for i, ride in enumerate(driver_rides_reversed, 1):
             origin = ride.get("origin", "גברעם")
             destination = ride.get("destination", "")
             
@@ -55,7 +59,7 @@ def _format_user_records_list(driver_rides: List[Dict], hitchhiker_requests: Lis
         if msg:
             msg += "\n"
         msg += "🎒 צריך/ה טרמפ:\n"
-        for i, req in enumerate(hitchhiker_requests, 1):
+        for i, req in enumerate(hitchhiker_requests_reversed, 1):
             origin = req.get("origin", "גברעם")
             destination = req.get("destination", "")
             msg += f"{i}) מ{origin} ל{destination} - {req['travel_date']} בשעה {req['departure_time']}\n"
@@ -122,6 +126,14 @@ async def handle_update_user_records(phone_number: str, arguments: Dict) -> Dict
                     "departure_time": departure_time_val,
                     "auto_approve_matches": arguments.get("auto_approve_matches", True)
                 })
+            
+            # 🆕 Initialize route data placeholders (will be calculated in background)
+            record.update({
+                "route_coordinates": None,
+                "route_distance_km": None,
+                "route_threshold_km": None,
+                "route_calculation_pending": True
+            })
         else:  # hitchhiker
             record.update({
                 "travel_date": arguments.get("travel_date"),
@@ -158,6 +170,26 @@ async def handle_update_user_records(phone_number: str, arguments: Dict) -> Dict
             return {"status": "error", "message": result2.get("message", "שמירת נסיעת חזור נכשלה")}
         
         logger.info(f"✅ Both records saved successfully!")
+        
+        # 🆕 Start background route calculations (fire-and-forget)
+        if role == "driver":
+            import asyncio
+            from services.route_service import calculate_and_save_route_background
+            
+            asyncio.create_task(calculate_and_save_route_background(
+                phone_number,
+                outbound_record["id"],
+                origin,
+                destination
+            ))
+            
+            asyncio.create_task(calculate_and_save_route_background(
+                phone_number,
+                return_record["id"],
+                destination,
+                origin
+            ))
+            logger.info(f"🔄 Route calculations started in background")
         
         # Add phone number for matching
         outbound_record["phone_number"] = phone_number
@@ -217,6 +249,19 @@ async def handle_update_user_records(phone_number: str, arguments: Dict) -> Dict
         return {"status": "error", "message": result.get("message", "שמירה נכשלה")}
     
     logger.info(f"✅ Saved successfully!")
+    
+    # 🆕 Start background route calculation (fire-and-forget)
+    if role == "driver":
+        import asyncio
+        from services.route_service import calculate_and_save_route_background
+        
+        asyncio.create_task(calculate_and_save_route_background(
+            phone_number,
+            record["id"],
+            origin,
+            destination
+        ))
+        logger.info(f"🔄 Route calculation started in background")
     
     # Find matches (always!)
     # Add phone_number and name to record for matching notifications
@@ -442,10 +487,17 @@ async def handle_update_user_record(phone_number: str, arguments: Dict) -> Dict:
     # Build updates dictionary (only fields that were provided)
     updates = {}
     update_messages = []
+    needs_route_recalc = False  # Track if route needs recalculation
+    
+    if "origin" in arguments:
+        updates["origin"] = arguments["origin"]
+        update_messages.append(f"מוצא → {arguments['origin']}")
+        needs_route_recalc = True  # Origin changed - recalculate route
     
     if "destination" in arguments:
         updates["destination"] = arguments["destination"]
         update_messages.append(f"יעד → {arguments['destination']}")
+        needs_route_recalc = True  # Destination changed - recalculate route
     
     if "departure_time" in arguments:
         updates["departure_time"] = arguments["departure_time"]
@@ -464,6 +516,10 @@ async def handle_update_user_record(phone_number: str, arguments: Dict) -> Dict:
     if not updates:
         return {"status": "error", "message": "לא צוין מה לעדכן (שעה, תאריך, יעד וכו')"}
     
+    # If route needs recalculation, mark it as pending
+    if needs_route_recalc and role == "driver":
+        updates["route_calculation_pending"] = True
+    
     # Update in DB
     success = await update_user_ride_or_request(phone_number, role, record_id, updates)
     
@@ -476,6 +532,19 @@ async def handle_update_user_record(phone_number: str, arguments: Dict) -> Dict:
         updated_record = data.get("driver_rides", [])[record_number - 1]
     else:
         updated_record = data.get("hitchhiker_requests", [])[record_number - 1]
+    
+    # 🆕 Recalculate route in background if origin/destination changed
+    if needs_route_recalc and role == "driver":
+        import asyncio
+        from services.route_service import calculate_and_save_route_background
+        
+        asyncio.create_task(calculate_and_save_route_background(
+            phone_number,
+            record_id,
+            updated_record.get("origin", "גברעם"),
+            updated_record.get("destination")
+        ))
+        logger.info(f"🔄 Route recalculation started in background for {record_id}")
     
     # Add phone number for matching
     updated_record["phone_number"] = phone_number

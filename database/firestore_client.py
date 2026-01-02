@@ -488,7 +488,11 @@ async def get_drivers_by_route(
                     continue
                 
                 # Filter by destination (origin is always גברעם)
-                if destination and ride.get("destination"):
+                # ⚡ BUT: If driver has route data, always include them (let matching_service check the route)
+                has_route = ride.get("route_coordinates_flat") is not None
+                
+                if destination and ride.get("destination") and not has_route:
+                    # Only filter by destination if driver has NO route data
                     if destination.lower() not in ride["destination"].lower():
                         continue
                 
@@ -502,7 +506,13 @@ async def get_drivers_by_route(
                     "departure_time": ride.get("departure_time"),
                     "return_time": ride.get("return_time"),
                     "auto_approve_matches": ride.get("auto_approve_matches", True),  # Include approval setting
-                    "ride_id": ride.get("id")
+                    "ride_id": ride.get("id"),
+                    # Include route data for on-route matching
+                    "route_coordinates_flat": ride.get("route_coordinates_flat"),
+                    "route_num_points": ride.get("route_num_points"),
+                    "route_distance_km": ride.get("route_distance_km"),
+                    "route_threshold_km": ride.get("route_threshold_km"),
+                    "route_calculation_pending": ride.get("route_calculation_pending", False)
                 })
             
             # Also check legacy driver_data for backward compatibility
@@ -605,4 +615,66 @@ async def get_hitchhiker_requests(
     except Exception as e:
         logger.error(f"❌ Error searching for hitchhikers: {str(e)}")
         return []
+
+
+async def update_ride_route_data(
+    phone_number: str,
+    ride_id: str,
+    route_data: Dict
+) -> bool:
+    """
+    Update route data for a ride (called from background task or lazy loading)
+    
+    Args:
+        phone_number: User's phone number
+        ride_id: Ride ID
+        route_data: Dictionary with coordinates, distance_km, threshold_km
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    if not _db:
+        logger.warning("⚠️ Database not initialized")
+        return False
+    
+    try:
+        doc_ref = _db.collection("users").document(phone_number)
+        doc = doc_ref.get()
+        
+        if not doc.exists:
+            logger.warning(f"⚠️ User {phone_number} not found")
+            return False
+        
+        user_data = doc.to_dict()
+        driver_rides = user_data.get("driver_rides", [])
+        
+        updated = False
+        for ride in driver_rides:
+            if ride.get("id") == ride_id:
+                # Flatten coordinates to avoid Firestore nested array limit
+                # Convert [(lat1,lon1), (lat2,lon2)] to [lat1,lon1,lat2,lon2]
+                flat_coords = []
+                for lat, lon in route_data["coordinates"]:
+                    flat_coords.extend([lat, lon])
+                
+                ride["route_coordinates_flat"] = flat_coords  # Flattened array
+                ride["route_num_points"] = len(route_data["coordinates"])  # Number of points
+                ride["route_distance_km"] = route_data["distance_km"]
+                ride["route_threshold_km"] = route_data["threshold_km"]
+                ride["route_calculation_pending"] = False  # Mark as complete
+                updated = True
+                logger.info(f"📍 Saving {len(route_data['coordinates'])} coordinates ({len(flat_coords)} values) to Firestore")
+                break
+        
+        if updated:
+            doc_ref.update({"driver_rides": driver_rides})
+            logger.info(f"✅ Updated route data for ride {ride_id}: {route_data['distance_km']:.1f}km")
+            return True
+        else:
+            logger.warning(f"⚠️ Ride {ride_id} not found for user {phone_number}")
+            return False
+        
+    except Exception as e:
+        logger.error(f"❌ Error updating route data: {e}")
+        return False
 

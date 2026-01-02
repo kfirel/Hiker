@@ -37,9 +37,21 @@ async def find_drivers_for_hitchhiker(hitchhiker: Dict) -> List[Dict]:
     for driver in drivers:
         logger.info(f"  🚗 Checking driver: {driver.get('name', 'Unknown')} to {driver['destination']}")
         
-        if not _match_destination(dest, driver["destination"]):
-            logger.info(f"    ❌ Destination mismatch: {dest} vs {driver['destination']}")
+        # 🆕 Check destination compatibility (direct or on-route)
+        is_match, match_type, details = await _check_destination_compatibility(
+            driver.get("origin", "גברעם"),
+            driver["destination"],
+            dest,
+            driver
+        )
+        
+        if not is_match:
+            logger.info(f"    ❌ Destination incompatible")
             continue
+        
+        logger.info(f"    ✅ Destination match ({match_type})")
+        if details:
+            driver["_match_details"] = details  # Store for notification
         
         # Check if driver matches - either recurring (days) or one-time (travel_date)
         if driver.get("days"):
@@ -88,9 +100,21 @@ async def find_hitchhikers_for_driver(driver: Dict) -> List[Dict]:
     for hitchhiker in hitchhikers:
         logger.info(f"  🎒 Checking hitchhiker to {hitchhiker['destination']}")
         
-        if not _match_destination(dest, hitchhiker["destination"]):
-            logger.info(f"    ❌ Destination mismatch")
+        # 🆕 Check destination compatibility (direct or on-route)
+        is_match, match_type, details = await _check_destination_compatibility(
+            driver.get("origin", "גברעם"),
+            dest,
+            hitchhiker["destination"],
+            driver
+        )
+        
+        if not is_match:
+            logger.info(f"    ❌ Destination incompatible")
             continue
+        
+        logger.info(f"    ✅ Destination match ({match_type})")
+        if details:
+            hitchhiker["_match_details"] = details  # Store for notification
         
         # Check date/day match
         request_date = hitchhiker.get("travel_date")
@@ -161,6 +185,106 @@ def _match_destination(dest1: str, dest2: str) -> bool:
     """Fuzzy match destinations (80%+ similarity)"""
     return fuzz.ratio(dest1.lower(), dest2.lower()) >= 80
 
+
+async def _check_destination_compatibility(
+    driver_origin: str,
+    driver_dest: str,
+    hitchhiker_dest: str,
+    driver_ride: Dict
+) -> tuple:
+    """
+    Check if destinations are compatible (direct match or on-route)
+    
+    Returns:
+        (is_match: bool, match_type: str, details: Optional[Dict])
+    """
+    from typing import Optional, Tuple
+    
+    # 1. Try direct fuzzy match first
+    if _match_destination(driver_dest, hitchhiker_dest):
+        return True, "exact_match", None
+    
+    # 2. Check if route data is available
+    # Handle both old format (nested arrays) and new format (flat array)
+    route_coords = driver_ride.get("route_coordinates")
+    
+    # If flat format, convert back to pairs
+    if not route_coords and driver_ride.get("route_coordinates_flat"):
+        flat_coords = driver_ride.get("route_coordinates_flat")
+        if flat_coords:  # Make sure we have data
+            num_points = driver_ride.get("route_num_points", len(flat_coords) // 2)
+            # Convert [lat1,lon1,lat2,lon2] back to [(lat1,lon1), (lat2,lon2)]
+            route_coords = [(flat_coords[i], flat_coords[i+1]) for i in range(0, len(flat_coords), 2)]
+            logger.info(f"    📍 Loaded route with {len(route_coords)} points from DB")
+    
+    route_threshold = driver_ride.get("route_threshold_km")
+    
+    # 🆕 If route calculation is still pending, skip on-route check for now
+    if driver_ride.get("route_calculation_pending") and not route_coords:
+        logger.info(f"    ⏳ Route calculation still in progress, skipping on-route check")
+        return False, None, None
+    
+    if not route_coords:
+        # Lazy loading for old rides without route data
+        logger.info(f"    💤 Lazy loading route for {driver_origin} → {driver_dest}")
+        from services.route_service import get_route_data
+        
+        route_data = await get_route_data(driver_origin, driver_dest)
+        
+        if not route_data:
+            logger.info(f"    ❌ Failed to calculate route")
+            return False, None, None
+        
+        # Save for next time
+        from database import update_ride_route_data
+        await update_ride_route_data(
+            driver_ride.get("phone_number"),
+            driver_ride.get("id"),
+            route_data
+        )
+        
+        route_coords = route_data["coordinates"]
+        route_threshold = route_data["threshold_km"]
+    
+    # 3. Calculate minimum distance from hitchhiker destination to route
+    from services.route_service import (
+        geocode_address, 
+        calculate_min_distance_to_route, 
+        calculate_dynamic_threshold,
+        calculate_distance_between_points
+    )
+    
+    hitchhiker_coords = geocode_address(hitchhiker_dest)
+    if not hitchhiker_coords:
+        logger.info(f"    ❌ Failed to geocode hitchhiker destination: {hitchhiker_dest}")
+        return False, None, None
+    
+    # 🆕 Calculate distance from driver origin to hitchhiker destination
+    driver_origin_coords = geocode_address(driver_origin)
+    if not driver_origin_coords:
+        logger.info(f"    ❌ Failed to geocode driver origin: {driver_origin}")
+        return False, None, None
+    
+    distance_from_origin = calculate_distance_between_points(driver_origin_coords, hitchhiker_coords)
+    
+    # 🆕 Calculate dynamic threshold based on distance from origin
+    dynamic_threshold = calculate_dynamic_threshold(distance_from_origin)
+    
+    # Calculate minimum distance from hitchhiker destination to route
+    min_distance = calculate_min_distance_to_route(route_coords, hitchhiker_coords)
+    
+    logger.info(f"    📏 Distance from origin: {distance_from_origin:.1f}km → threshold: {dynamic_threshold:.1f}km")
+    logger.info(f"    📏 Distance from route: {min_distance:.1f}km")
+    
+    if min_distance <= dynamic_threshold:
+        return True, "on_route", {
+            "distance": min_distance,
+            "threshold": dynamic_threshold,
+            "distance_from_origin": distance_from_origin
+        }
+    
+    return False, None, None
+
 def _match_time(time1: str, time2: str, tolerance: int = 30) -> bool:
     """Check if times are close (±30 min)"""
     try:
@@ -183,24 +307,44 @@ def _format_driver_message(driver: Dict) -> str:
     else:
         time_info = ""
     
-    return f"""🚗 נמצא נהג!
+    msg = f"""🚗 נמצא נהג!
 
 {driver.get('name', 'נהג')} נוסע ל{driver['destination']}
 {time_info}
-שעה: {driver['departure_time']}
+שעה: {driver['departure_time']}"""
+    
+    # 🆕 Add on-route information if this is an on-route match
+    match_details = driver.get("_match_details")
+    if match_details:
+        distance = match_details["distance"]
+        msg += f"\n\n📍 היעד שלך נמצא בדרך ({distance:.1f} ק\"מ מהמסלול)"
+    
+    msg += f"""
 
 📱 טלפון: {driver['phone_number']}
 
 בהצלחה! 🙂"""
+    
+    return msg
 
 def _format_hitchhiker_message(hitchhiker: Dict, destination: str) -> str:
     """Format hitchhiker match notification"""
-    return f"""🎒 נמצא טרמפיסט!
+    msg = f"""🎒 נמצא טרמפיסט!
 
-{hitchhiker.get('name', 'טרמפיסט')} מחפש/ת נסיעה ל{destination}
+{hitchhiker.get('name', 'טרמפיסט')} מחפש/ת נסיעה ל{hitchhiker.get('destination', destination)}
 תאריך: {hitchhiker.get('travel_date')}
-שעה: {hitchhiker.get('departure_time')}
+שעה: {hitchhiker.get('departure_time')}"""
+    
+    # 🆕 Add on-route information if this is an on-route match
+    match_details = hitchhiker.get("_match_details")
+    if match_details:
+        distance = match_details["distance"]
+        msg += f"\n\n📍 היעד שלו/ה בדרך אליך ({distance:.1f} ק\"מ מהמסלול שלך)"
+    
+    msg += f"""
 
 📱 טלפון: {hitchhiker['phone_number']}
 
 בהצלחה! 🙂"""
+    
+    return msg
