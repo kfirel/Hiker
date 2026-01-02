@@ -203,44 +203,44 @@ FUNCTIONS = [
         "name": "update_user_records",
         "description": "שמירת טרמפ של נהג או בקשה של טרמפיסט. חובה לשלוח role + destination + departure_time + (travel_date או days). אל תשאל אישורים - פשוט קרא לפונקציה!",
         "parameters": {
-            "type": "object",
+            "type": "OBJECT",
             "properties": {
                 "role": {
-                    "type": "string",
+                    "type": "STRING",
                     "enum": ["driver", "hitchhiker"],
                     "description": "driver או hitchhiker"
                 },
                 "destination": {
-                    "type": "string",
+                    "type": "STRING",
                     "description": "יעד הנסיעה"
                 },
                 "days": {
-                    "type": "array",
-                    "items": {"type": "string"},
+                    "type": "ARRAY",
+                    "items": {"type": "STRING"},
                     "description": "ימים באנגלית: Sunday, Monday, Tuesday, Wednesday, Thursday, Friday, Saturday. לנהגים קבועים בלבד! אם הנהג אומר 'כל יום' שלח את כל 7 הימים."
                 },
                 "travel_date": {
-                    "type": "string",
+                    "type": "STRING",
                     "description": "תאריך בפורמט YYYY-MM-DD. חובה לטרמפיסטים! גם נהגים חד-פעמיים צריכים travel_date (לא days)."
                 },
                 "departure_time": {
-                    "type": "string",
+                    "type": "STRING",
                     "description": "שעה בפורמט HH:MM (24 שעות)"
                 },
                 "origin": {
-                    "type": "string",
+                    "type": "STRING",
                     "description": "מוצא הנסיעה. ברירת מחדל: 'גברעם'. דוגמאות: 'חוזר מX' → origin=X, destination='גברעם'; 'מחפש טרמפ מX' → origin=X, destination='גברעם'; 'מאשדוד' → origin='אשדוד', destination='גברעם'"
                 },
                 "return_trip": {
-                    "type": "boolean",
+                    "type": "BOOLEAN",
                     "description": "האם זו נסיעת הלוך-שוב? true אם המשתמש אומר 'וחוזר ב-X' או 'וחוזר בשעה X'. המערכת תיצור אוטומטית שני records (הלוך וחזור)"
                 },
                 "return_time": {
-                    "type": "string",
+                    "type": "STRING",
                     "description": "שעת חזרה בפורמט HH:MM (רק אם return_trip=true). זו השעה שבה הנהג חוזר מהיעד למוצא"
                 },
                 "flexibility": {
-                    "type": "string",
+                    "type": "STRING",
                     "enum": ["strict", "flexible", "very_flexible"],
                     "description": """גמישות זמנים - רק לטרמפיסטים (hitchhiker)! זיהוי אוטומטי:
 - strict: המשתמש רוצה זמן מדויק (±30 דק') - ביטויים: "בדיוק ב", "רק בזמן", "חייב להגיע ב", "לא גמיש", "בדיוק בשעה"
@@ -261,21 +261,21 @@ FUNCTIONS = [
     {
         "name": "view_user_records",
         "description": "הצגת כל הטרמפים והבקשות של המשתמש",
-        "parameters": {"type": "object", "properties": {}}
+        "parameters": {"type": "OBJECT", "properties": {}}
     },
     {
         "name": "delete_user_record",
         "description": "מחיקת נסיעה או בקשה לפי מספר סידורי מהרשימה (המשתמש צריך לראות רשימה קודם)",
         "parameters": {
-            "type": "object",
+            "type": "OBJECT",
             "properties": {
                 "role": {
-                    "type": "string",
+                    "type": "STRING",
                     "enum": ["driver", "hitchhiker"],
                     "description": "driver או hitchhiker"
                 },
                 "record_number": {
-                    "type": "integer",
+                    "type": "INTEGER",
                     "description": "מספר הנסיעה ברשימה (1, 2, 3...). המשתמש רואה את המספר בתגובה ל-view_user_records"
                 }
             },
@@ -286,10 +286,10 @@ FUNCTIONS = [
         "name": "delete_all_user_records",
         "description": "מחיקת נסיעות של המשתמש. השתמש בזה רק כשהמשתמש אומר בבירור 'מחק...'",
         "parameters": {
-            "type": "object",
+            "type": "OBJECT",
             "properties": {
                 "role": {
-                    "type": "string",
+                    "type": "STRING",
                     "enum": ["driver", "hitchhiker", "all"],
                     "description": "driver (רק טרמפים/נסיעות), hitchhiker (רק בקשות), או all (הכל - גם טרמפים וגם בקשות)"
                 }
@@ -301,32 +301,32 @@ FUNCTIONS = [
         "name": "update_user_record",
         "description": "עדכון נסיעה או בקשה קיימת לפי מספר סידורי. אפשר לעדכן יעד, שעה, תאריך או ימים. חובה לציין לפחות שדה אחד לעדכון!",
         "parameters": {
-            "type": "object",
+            "type": "OBJECT",
             "properties": {
                 "role": {
-                    "type": "string",
+                    "type": "STRING",
                     "enum": ["driver", "hitchhiker"],
                     "description": "driver או hitchhiker"
                 },
                 "record_number": {
-                    "type": "integer",
+                    "type": "INTEGER",
                     "description": "מספר הנסיעה ברשימה (1, 2, 3...)"
                 },
                 "destination": {
-                    "type": "string",
+                    "type": "STRING",
                     "description": "יעד חדש (אופציונלי)"
                 },
                 "departure_time": {
-                    "type": "string",
+                    "type": "STRING",
                     "description": "שעה חדשה בפורמט HH:MM (אופציונלי)"
                 },
                 "travel_date": {
-                    "type": "string",
+                    "type": "STRING",
                     "description": "תאריך חדש בפורמט YYYY-MM-DD (אופציונלי, רק לנסיעות חד-פעמיות)"
                 },
                 "days": {
-                    "type": "array",
-                    "items": {"type": "string"},
+                    "type": "ARRAY",
+                    "items": {"type": "STRING"},
                     "description": "ימים חדשים באנגלית (אופציונלי, רק לנסיעות קבועות)"
                 }
             },
@@ -337,7 +337,7 @@ FUNCTIONS = [
         "name": "show_help",
         "description": "הצגת נסיעות המשתמש אם יש, או הודעת עזרה אם אין. קרא לזה כשהמשתמש שולח '?' או מבקש עזרה/הסבר על המערכת",
         "parameters": {
-            "type": "object",
+            "type": "OBJECT",
             "properties": {},
             "required": []
         }
