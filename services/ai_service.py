@@ -374,21 +374,38 @@ async def process_message_with_ai(phone_number: str, message_text: str, user_dat
     try:
         client = genai.Client(api_key=GEMINI_API_KEY)
         
-        # Call Gemini 2.0 Flash with function calling preference
-        response = client.models.generate_content(
-            model="gemini-2.0-flash-exp",
-            contents=messages,
-            config=types.GenerateContentConfig(
-                system_instruction=SYSTEM_PROMPT,
-                tools=[types.Tool(function_declarations=FUNCTIONS)],
-                tool_config=types.ToolConfig(
-                    function_calling_config=types.FunctionCallingConfig(
-                        mode="ANY"
+        # Call Gemini 2.0 Flash with function calling preference (with timeout)
+        import asyncio
+        
+        async def call_gemini_with_timeout():
+            # Note: google.genai doesn't have async support yet, so we run in executor
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(
+                None,
+                lambda: client.models.generate_content(
+                    model="gemini-2.0-flash-exp",
+                    contents=messages,
+                    config=types.GenerateContentConfig(
+                        system_instruction=SYSTEM_PROMPT,
+                        tools=[types.Tool(function_declarations=FUNCTIONS)],
+                        tool_config=types.ToolConfig(
+                            function_calling_config=types.FunctionCallingConfig(
+                                mode="ANY"
+                            )
+                        ),
+                        temperature=0.1
                     )
-                ),
-                temperature=0.1
+                )
             )
-        )
+        
+        logger.info("🤖 Calling Gemini API...")
+        try:
+            response = await asyncio.wait_for(call_gemini_with_timeout(), timeout=30.0)
+            logger.info("✅ Gemini API response received")
+        except asyncio.TimeoutError:
+            logger.error("⏱️ Gemini API timeout after 30 seconds")
+            await send_whatsapp_message(phone_number, "מצטער, הבקשה לקחה יותר מדי זמן. נסה שוב")
+            return
         
         # Handle response - check for function call or text
         first_part = response.candidates[0].content.parts[0]
