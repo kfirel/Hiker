@@ -71,8 +71,24 @@ async def find_drivers_for_hitchhiker(hitchhiker: Dict) -> List[Dict]:
             logger.info(f"    ❌ Driver has no days or travel_date")
             continue
         
-        if not _match_time(time, driver["departure_time"]):
-            logger.info(f"    ❌ Time mismatch: {time} vs {driver['departure_time']}")
+        # 🆕 Calculate dynamic time tolerance based on distance and flexibility
+        from services.route_service import geocode_address, calculate_distance_between_points
+        
+        origin_coords = geocode_address(hitchhiker.get("origin", "גברעם"))
+        hh_dest_coords = geocode_address(hitchhiker["destination"])
+        
+        if origin_coords and hh_dest_coords:
+            distance_km = calculate_distance_between_points(origin_coords, hh_dest_coords)
+            flexibility_level = hitchhiker.get("flexibility", "flexible")
+            tolerance = _calculate_time_tolerance(flexibility_level, distance_km)
+            
+            logger.info(f"    📏 Distance: {distance_km:.1f}km, Flexibility: {flexibility_level} → ±{tolerance} min")
+        else:
+            tolerance = 30  # Fallback to default
+            logger.info(f"    ⚠️ Failed to calculate distance, using default tolerance: ±{tolerance} min")
+        
+        if not _match_time(time, driver["departure_time"], tolerance):
+            logger.info(f"    ❌ Time mismatch: {time} vs {driver['departure_time']} (tolerance: ±{tolerance} min)")
             continue
         if not driver.get("auto_approve_matches", True):
             logger.info(f"    ❌ Driver doesn't auto-approve")
@@ -140,8 +156,24 @@ async def find_hitchhikers_for_driver(driver: Dict) -> List[Dict]:
             logger.info(f"    ❌ Driver has no days or travel_date")
             continue
         
-        if not _match_time(time, hitchhiker["departure_time"]):
-            logger.info(f"    ❌ Time mismatch: {time} vs {hitchhiker['departure_time']}")
+        # 🆕 Calculate dynamic time tolerance based on distance and flexibility
+        from services.route_service import geocode_address, calculate_distance_between_points
+        
+        origin_coords = geocode_address(driver.get("origin", "גברעם"))
+        hh_dest_coords = geocode_address(hitchhiker["destination"])
+        
+        if origin_coords and hh_dest_coords:
+            distance_km = calculate_distance_between_points(origin_coords, hh_dest_coords)
+            flexibility_level = hitchhiker.get("flexibility", "flexible")
+            tolerance = _calculate_time_tolerance(flexibility_level, distance_km)
+            
+            logger.info(f"    📏 Distance: {distance_km:.1f}km, Flexibility: {flexibility_level} → ±{tolerance} min")
+        else:
+            tolerance = 30  # Fallback to default
+            logger.info(f"    ⚠️ Failed to calculate distance, using default tolerance: ±{tolerance} min")
+        
+        if not _match_time(time, hitchhiker["departure_time"], tolerance):
+            logger.info(f"    ❌ Time mismatch: {time} vs {hitchhiker['departure_time']} (tolerance: ±{tolerance} min)")
             continue
         
         logger.info(f"    ✅ MATCH FOUND!")
@@ -286,7 +318,7 @@ async def _check_destination_compatibility(
     return False, None, None
 
 def _match_time(time1: str, time2: str, tolerance: int = 30) -> bool:
-    """Check if times are close (±30 min)"""
+    """Check if times are close (within tolerance minutes)"""
     try:
         h1, m1 = map(int, time1.split(":"))
         h2, m2 = map(int, time2.split(":"))
@@ -294,6 +326,46 @@ def _match_time(time1: str, time2: str, tolerance: int = 30) -> bool:
         return diff <= tolerance
     except:
         return False
+
+def _calculate_time_tolerance(flexibility_level: str, distance_km: float) -> int:
+    """
+    Calculate time tolerance in minutes based on flexibility level and distance
+    
+    Formula:
+    - strict:         30 minutes (fixed)
+    - flexible:       30 + (distance_km / 50) * 30 minutes (max 180)
+    - very_flexible:  30 + (distance_km / 25) * 30 minutes (max 240)
+    
+    Examples:
+    - Ashkelon (12km):      strict=±30min, flexible=±37min, very_flexible=±44min
+    - Mitzpe Ramon (200km): strict=±30min, flexible=±150min, very_flexible=±270min
+    
+    Args:
+        flexibility_level: 'strict', 'flexible', or 'very_flexible'
+        distance_km: Distance from origin to destination
+        
+    Returns:
+        Tolerance in minutes
+    """
+    if flexibility_level == "strict":
+        return 30  # Always ±30 minutes
+    
+    elif flexibility_level == "flexible":
+        # ±30 + (distance_km / 50) * 30 minutes
+        # Example: 200km = ±30 + 4*30 = ±150 minutes (2.5 hours)
+        tolerance = 30 + (distance_km / 50) * 30
+        return min(int(tolerance), 180)  # Max 3 hours
+    
+    elif flexibility_level == "very_flexible":
+        # ±30 + (distance_km / 25) * 30 minutes
+        # Example: 200km = ±30 + 8*30 = ±270 minutes (4.5 hours)
+        tolerance = 30 + (distance_km / 25) * 30
+        return min(int(tolerance), 240)  # Max 4 hours
+    
+    else:
+        # Default to flexible
+        tolerance = 30 + (distance_km / 50) * 30
+        return min(int(tolerance), 180)
 
 def _format_driver_message(driver: Dict) -> str:
     """Format driver match notification"""
@@ -329,11 +401,22 @@ def _format_driver_message(driver: Dict) -> str:
 
 def _format_hitchhiker_message(hitchhiker: Dict, destination: str) -> str:
     """Format hitchhiker match notification"""
+    # Translate flexibility level to Hebrew
+    flexibility_hebrew = {
+        "strict": "זמן קבוע ⏰",
+        "flexible": "גמיש 🟡",
+        "very_flexible": "מאוד גמיש 🟢"
+    }
+    
+    flexibility_level = hitchhiker.get("flexibility", "flexible")
+    flex_text = flexibility_hebrew.get(flexibility_level, "גמיש 🟡")
+    
     msg = f"""🎒 נמצא טרמפיסט!
 
 {hitchhiker.get('name', 'טרמפיסט')} מחפש/ת נסיעה ל{hitchhiker.get('destination', destination)}
 תאריך: {hitchhiker.get('travel_date')}
-שעה: {hitchhiker.get('departure_time')}"""
+שעה: {hitchhiker.get('departure_time')}
+גמישות: {flex_text}"""
     
     # 🆕 Add on-route information if this is an on-route match
     match_details = hitchhiker.get("_match_details")

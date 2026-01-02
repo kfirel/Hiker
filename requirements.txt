@@ -11,7 +11,7 @@ requests==2.31.0
 twilio==8.11.0
 
 # AI
-google-generativeai==0.8.3
+google-generativeai==0.7.2
 
 # Geocoding and routing
 geopy==2.4.1
