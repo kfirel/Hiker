@@ -59,10 +59,54 @@ def _format_user_records_list(driver_rides: List[Dict], hitchhiker_requests: Lis
         if msg:
             msg += "\n"
         msg += "🎒 צריך/ה טרמפ:\n"
+        
+        # Import functions for flexibility calculation
+        from services.route_service import geocode_address, calculate_distance_between_points
+        from services.matching_service import _calculate_time_tolerance
+        
         for i, req in enumerate(hitchhiker_requests_reversed, 1):
             origin = req.get("origin", "גברעם")
             destination = req.get("destination", "")
-            msg += f"{i}) מ{origin} ל{destination} - {req['travel_date']} בשעה {req['departure_time']}\n"
+            flexibility_level = req.get("flexibility", "flexible")
+            
+            # Calculate actual time tolerance
+            origin_coords = geocode_address(origin)
+            dest_coords = geocode_address(destination)
+            
+            if origin_coords and dest_coords:
+                distance_km = calculate_distance_between_points(origin_coords, dest_coords)
+                tolerance_minutes = _calculate_time_tolerance(flexibility_level, distance_km)
+                
+                # Format flexibility text with emoji
+                if flexibility_level == "strict":
+                    flex_emoji = "🔒"
+                    flex_text = "זמן קבוע, ±30 דק'"
+                elif flexibility_level == "very_flexible":
+                    flex_emoji = "🟢"
+                    flex_text = "מאוד גמיש, ±6 ש'"
+                else:  # flexible
+                    flex_emoji = "🟡"
+                    hours = tolerance_minutes // 60
+                    minutes = tolerance_minutes % 60
+                    if hours > 0 and minutes > 0:
+                        flex_text = f"גמיש, ±{hours} ש' {minutes} דק'"
+                    elif hours > 0:
+                        flex_text = f"גמיש, ±{hours} ש'"
+                    else:
+                        flex_text = f"גמיש, ±{minutes} דק'"
+            else:
+                # Fallback if geocoding fails
+                if flexibility_level == "strict":
+                    flex_emoji = "🔒"
+                    flex_text = "זמן קבוע, ±30 דק'"
+                elif flexibility_level == "very_flexible":
+                    flex_emoji = "🟢"
+                    flex_text = "מאוד גמיש, ±6 ש'"
+                else:
+                    flex_emoji = "🟡"
+                    flex_text = "גמיש"
+            
+            msg += f"{i}) מ{origin} ל{destination} - {req['travel_date']} בשעה {req['departure_time']} {flex_emoji} ({flex_text})\n"
     
     return msg.strip()
 
@@ -138,7 +182,7 @@ async def handle_update_user_records(phone_number: str, arguments: Dict) -> Dict
             record.update({
                 "travel_date": arguments.get("travel_date"),
                 "departure_time": departure_time_val,
-                "flexibility": arguments.get("flexibility", "flexible")
+                "flexibility": arguments.get("flexibility", "very_flexible")  # Default: very flexible (±6h)
             })
         
         return record
@@ -202,13 +246,7 @@ async def handle_update_user_records(phone_number: str, arguments: Dict) -> Dict
         logger.info(f"🔍 Starting match search for return trip...")
         matches_return = await find_matches_for_new_record(role, return_record)
         
-        # Send notifications
-        if matches_outbound:
-            await send_match_notifications(role, matches_outbound, outbound_record)
-        if matches_return:
-            await send_match_notifications(role, matches_return, return_record)
-        
-        # Build success message
+        # Build success message (send before notifications)
         total_matches = len(matches_outbound) + len(matches_return)
         msg = f"נסיעה הלוך-שוב נשמרה! 🚗\n"
         msg += f"הלוך: מ{origin} ל{destination} בשעה {departure_time}\n"
@@ -225,6 +263,19 @@ async def handle_update_user_records(phone_number: str, arguments: Dict) -> Dict
         )
         
         msg += f"\n\n📋 הנסיעות שלך עכשיו:\n\n{list_msg}"
+        
+        # Send match notifications AFTER the success message (with small delay)
+        if matches_outbound or matches_return:
+            import asyncio
+            
+            async def send_notifications_delayed():
+                await asyncio.sleep(0.5)  # Small delay to ensure success message is sent first
+                if matches_outbound:
+                    await send_match_notifications(role, matches_outbound, outbound_record)
+                if matches_return:
+                    await send_match_notifications(role, matches_return, return_record)
+            
+            asyncio.create_task(send_notifications_delayed())
         
         return {"status": "success", "message": msg}
     
@@ -272,11 +323,7 @@ async def handle_update_user_records(phone_number: str, arguments: Dict) -> Dict
     matches = await find_matches_for_new_record(role, record)
     logger.info(f"🎯 Match search complete: {len(matches)} matches found")
     
-    # Send notifications
-    if matches:
-        await send_match_notifications(role, matches, record)
-    
-    # Success message
+    # Success message (send first, before notifications)
     if role == "driver":
         if record.get("days"):
             msg = f"מעולה! הטרמפ הקבוע שלך ל{destination} נשמר 🚗"
@@ -285,7 +332,13 @@ async def handle_update_user_records(phone_number: str, arguments: Dict) -> Dict
         if matches:
             msg += f"\n✨ כבר נמצאו {len(matches)} טרמפיסטים מתאימים!"
     else:
+        # Hitchhiker - add flexibility info
         msg = f"הבקשה שלך ל{destination} נשמרה! 🎒"
+        
+        # Calculate and show time flexibility
+        flexibility_level = record.get("flexibility", "very_flexible")
+        logger.info(f"📊 Flexibility saved in record: {flexibility_level}")
+        
         if matches:
             msg += f"\n🚗 נמצאו {len(matches)} נהגים מתאימים!"
     
@@ -298,6 +351,16 @@ async def handle_update_user_records(phone_number: str, arguments: Dict) -> Dict
     )
     
     msg += f"\n\n📋 הנסיעות שלך עכשיו:\n\n{list_msg}"
+    
+    # Send match notifications AFTER the success message (with small delay)
+    if matches:
+        import asyncio
+        
+        async def send_notifications_delayed():
+            await asyncio.sleep(0.5)  # Small delay to ensure success message is sent first
+            await send_match_notifications(role, matches, record)
+        
+        asyncio.create_task(send_notifications_delayed())
     
     return {"status": "success", "message": msg}
 
@@ -553,10 +616,7 @@ async def handle_update_user_record(phone_number: str, arguments: Dict) -> Dict:
     logger.info(f"🔍 Re-running match search after update...")
     matches = await find_matches_for_new_record(role, updated_record)
     
-    if matches:
-        await send_match_notifications(role, matches, updated_record)
-    
-    # Build success message
+    # Build success message (send before notifications)
     update_str = ", ".join(update_messages)
     msg = f"{record_type} {record_number}) עודכן/ה! ✅\n{update_str}"
     
@@ -572,12 +632,44 @@ async def handle_update_user_record(phone_number: str, arguments: Dict) -> Dict:
     
     msg += f"\n\n📋 הנסיעות שלך עכשיו:\n\n{list_msg}"
     
+    # Send match notifications AFTER the success message (with small delay)
+    if matches:
+        import asyncio
+        
+        async def send_notifications_delayed():
+            await asyncio.sleep(0.5)  # Small delay to ensure success message is sent first
+            await send_match_notifications(role, matches, updated_record)
+        
+        asyncio.create_task(send_notifications_delayed())
+    
     return {"status": "success", "message": msg}
 
-async def handle_show_help() -> Dict:
-    """Handle show_help function call - display help message to user"""
+async def handle_show_help(phone_number: str) -> Dict:
+    """
+    Handle show_help function call - display help message or user's trips
+    
+    If user has active trips/requests, show them.
+    Otherwise, show help message.
+    """
+    from database import get_user_rides_and_requests
     from config import HELP_MESSAGE
     
+    # Get user's current trips
+    data = await get_user_rides_and_requests(phone_number)
+    driver_rides = data.get("driver_rides", [])
+    hitchhiker_requests = data.get("hitchhiker_requests", [])
+    
+    # If user has trips, show them
+    if driver_rides or hitchhiker_requests:
+        msg = "📋 הנסיעות שלך:\n\n"
+        msg += _format_user_records_list(driver_rides, hitchhiker_requests)
+        
+        return {
+            "status": "success",
+            "message": msg
+        }
+    
+    # Otherwise, show help message
     return {
         "status": "success",
         "message": HELP_MESSAGE

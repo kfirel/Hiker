@@ -1,7 +1,7 @@
-"""AI service using Gemini 1.5 Flash"""
+"""AI service using Gemini 2.0 Flash"""
 import logging
-import google.generativeai as genai
-from google.generativeai.types import Tool, FunctionDeclaration
+from google import genai
+from google.genai import types
 from config import GEMINI_API_KEY
 
 logger = logging.getLogger(__name__)
@@ -18,10 +18,15 @@ SYSTEM_PROMPT = """אתה עוזר חכם למערכת טרמפים של גבר�
   * תמיד חד-פעמי: destination, travel_date (YYYY-MM-DD), departure_time, flexibility
 
 גמישות זמנים (רק לטרמפיסטים!):
-- strict: "בדיוק ב", "רק בזמן", "חייב להגיע ב", "לא גמיש", "בדיוק בשעה" → flexibility="strict"
-- flexible (ברירת מחדל): "גמיש", "לא נורא", "בערך", "סביב" → flexibility="flexible"
-- very_flexible: "מאוד גמיש", "ממש לא דחוף", "כל זמן טוב", "סופר גמיש" → flexibility="very_flexible"
-חשוב: אם לא צוין - ברירת מחדל flexible. נהגים לא צריכים flexibility!
+- strict: "בדיוק ב", "רק בזמן", "חייב להגיע ב", "לא גמיש" → flexibility="strict" (±30 דקות)
+- flexible: "גמיש", "לא נורא", "בערך" (כשציין שעה) → flexibility="flexible" (±0.5-3 שעות לפי מרחק)
+- very_flexible: "מאוד גמיש", "כל זמן טוב", או כשלא ציין שעה → flexibility="very_flexible" (±6 שעות!)
+
+חשוב: 
+- אם לא צוינה שעה מפורשת → very_flexible (±6 שעות תמיד!)
+- אם ציין שעה → flexible (±0.5-3 שעות לפי מרחק)
+- אם ציין "בדיוק"/"חייב" → strict (±30 דקות)
+- נהגים לא צריכים flexibility!
 
 זמנים יחסיים (חשב לפי התאריך והשעה הנוכחית):
 תאריכים:
@@ -162,21 +167,27 @@ SYSTEM_PROMPT = """אתה עוזר חכם למערכת טרמפים של גבר�
 אתה: [קורא ל-update_user_records עם: role="hitchhiker", origin="אשדוד", destination="גברעם", travel_date="2026-01-02", departure_time="08:00"]
 הסבר: "בזמן הקרוב" = היום, שעה קרובה (ברירת מחדל 08:00 אם לא צוין). "מאשדוד" = origin
 
-דוגמה 14 - בקשת עזרה:
-משתמש: "עזרה" / "help" / "מה אפשר לעשות" / "איך זה עובד" / "הסבר" / "תעזור לי"
+דוגמה 14 - בקשת עזרה או צפייה בנסיעות:
+משתמש: "?" / "עזרה" / "help" / "מה אפשר לעשות" / "איך זה עובד" / "הסבר" / "תעזור לי"
 אתה: [קורא ל-show_help]
+הסבר: אם יש למשתמש נסיעות פעילות - מציג אותן. אם אין - מציג הודעת עזרה
 
-דוגמה 15 - גמישות זמנים (טרמפיסט מאוד גמיש):
-משתמש: "מחפש טרמפ למצפה רמון מחר בשעה 11, אני מאוד גמיש"
-אתה: [קורא ל-update_user_records עם: role="hitchhiker", destination="מצפה רמון", travel_date="2026-01-03", departure_time="11:00", flexibility="very_flexible"]
+דוגמה 15 - גמישות very_flexible (ללא שעה):
+משתמש: "אני צריך טרמפ לאשקלון מחר"
+אתה: [קורא ל-update_user_records עם: role="hitchhiker", destination="אשקלון", travel_date="2026-01-03", departure_time="08:00", flexibility="very_flexible"]
+הסבר: לא ציין שעה → very_flexible (±6 שעות!)
 
 דוגמה 16 - גמישות strict (טרמפיסט לא גמיש):
 משתמש: "צריכה טרמפ לתל אביב מחר בדיוק בשעה 8, חייבת להגיע בזמן"
 אתה: [קורא ל-update_user_records עם: role="hitchhiker", destination="תל אביב", travel_date="2026-01-03", departure_time="08:00", flexibility="strict"]
 
-דוגמה 17 - גמישות flexible (ברירת מחדל):
+דוגמה 17 - גמישות flexible (עם שעה):
 משתמש: "מחפש טרמפ לאילת מחר בשעה 10, גמיש"
 אתה: [קורא ל-update_user_records עם: role="hitchhiker", destination="אילת", travel_date="2026-01-03", departure_time="10:00", flexibility="flexible"]
+
+דוגמה 18 - גמישות very_flexible (מפורש):
+משתמש: "מחפש טרמפ למצפה רמון מחר בשעה 11, אני מאוד גמיש"
+אתה: [קורא ל-update_user_records עם: role="hitchhiker", destination="מצפה רמון", travel_date="2026-01-03", departure_time="11:00", flexibility="very_flexible"]
 
 חשוב: 
 - אל תכתב את שם הפונקציה בטקסט! תקרא לפונקציה ישירות!
@@ -233,10 +244,15 @@ FUNCTIONS = [
                     "enum": ["strict", "flexible", "very_flexible"],
                     "description": """גמישות זמנים - רק לטרמפיסטים (hitchhiker)! זיהוי אוטומטי:
 - strict: המשתמש רוצה זמן מדויק (±30 דק') - ביטויים: "בדיוק ב", "רק בזמן", "חייב להגיע ב", "לא גמיש", "בדיוק בשעה"
-- flexible: גמישות רגילה (±1-2.5 שעות לפי מרחק) - ברירת מחדל או: "גמיש", "לא נורא", "בערך", "סביב", "בסביבות"
-- very_flexible: מאוד גמיש (±1.5-4 שעות לפי מרחק) - ביטויים: "מאוד גמיש", "ממש לא דחוף", "כל זמן טוב", "אין בעיה עם השעה", "סופר גמיש"
+- flexible: גמישות רגילה (±0.5-3 שעות לפי מרחק) - כשציין שעה + "גמיש", "לא נורא", "בערך", "סביב"
+- very_flexible: מאוד גמיש (±6 שעות קבוע!) - "מאוד גמיש", "כל זמן טוב", או כשלא ציין שעה כלל
 
-חשוב: נהגים (driver) לא צריכים flexibility! רק טרמפיסטים (hitchhiker)"""
+חשוב מאוד - זיהוי שעה וגמישות:
+- אם המשתמש לא ציין שעה כלל ("טרמפ לאשקלון מחר" ללא שעה) → departure_time="08:00" + flexibility="very_flexible"
+- אם המשתמש ציין שעה ("טרמפ לאשקלון מחר בשעה 10") → departure_time="10:00" + flexibility="flexible"  
+- אם המשתמש ציין "בדיוק"/"חייב" → flexibility="strict"
+- אם המשתמש ציין "מאוד גמיש" → flexibility="very_flexible" (גם אם ציין שעה!)
+- נהגים (driver) לא צריכים flexibility כלל!"""
                 }
             },
             "required": ["role", "destination", "departure_time"]
@@ -319,7 +335,7 @@ FUNCTIONS = [
     },
     {
         "name": "show_help",
-        "description": "הצגת הודעת עזרה מפורטת למשתמש. קרא לזה כשהמשתמש מבקש עזרה, הסבר על המערכת, או שואל מה אפשר לעשות",
+        "description": "הצגת נסיעות המשתמש אם יש, או הודעת עזרה אם אין. קרא לזה כשהמשתמש שולח '?' או מבקש עזרה/הסבר על המערכת",
         "parameters": {
             "type": "object",
             "properties": {},
@@ -346,49 +362,43 @@ async def process_message_with_ai(phone_number: str, message_text: str, user_dat
         await send_whatsapp_message(phone_number, "מצטער, שירות ה-AI לא זמין כרגע")
         return
     
-    # Configure Gemini
-    genai.configure(api_key=GEMINI_API_KEY)
-    
     # Add current date/time context for the AI (Israel timezone)
     now = get_israel_now()
     current_context = f"\n\n[מידע נוכחי: תאריך היום: {now.strftime('%Y-%m-%d')}, שעה: {now.strftime('%H:%M')}, יום: {now.strftime('%A')}]"
     
-    # Build chat history (convert to format expected by 0.7.x)
+    # Build chat history
     history = user_data.get("chat_history", [])[-10:]  # Last 10 messages
-    chat_history = []
-    for msg in history:
-        chat_history.append({
-            "role": msg["role"],
-            "parts": [msg["content"]]
-        })
+    messages = [{"role": msg["role"], "parts": [{"text": msg["content"]}]} for msg in history]
+    messages.append({"role": "user", "parts": [{"text": message_text + current_context}]})
     
     try:
-        # Create model with system instruction and tools
-        model = genai.GenerativeModel(
-            model_name='gemini-1.5-flash',
-            system_instruction=SYSTEM_PROMPT,
-            tools=[Tool(function_declarations=FUNCTIONS)],
-            generation_config={"temperature": 0.1}
-        )
+        client = genai.Client(api_key=GEMINI_API_KEY)
         
-        # Start chat with history
-        chat = model.start_chat(history=chat_history)
-        
-        # Send message with function calling enabled
-        response = chat.send_message(
-            message_text + current_context,
-            tool_config={'function_calling_config': {'mode': 'ANY'}}
+        # Call Gemini 2.0 Flash with function calling preference
+        response = client.models.generate_content(
+            model="gemini-2.0-flash-exp",
+            contents=messages,
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM_PROMPT,
+                tools=[types.Tool(function_declarations=FUNCTIONS)],
+                tool_config=types.ToolConfig(
+                    function_calling_config=types.FunctionCallingConfig(
+                        mode="ANY"
+                    )
+                ),
+                temperature=0.1
+            )
         )
         
         # Handle response - check for function call or text
-        first_part = response.parts[0]
+        first_part = response.candidates[0].content.parts[0]
         
         # Check if this is a function call
         fc = getattr(first_part, 'function_call', None)
         if fc:
             # Function call
             func_name = fc.name
-            func_args = fc.args
+            func_args = dict(fc.args)
             
             logger.info(f"✅ AI function call: {func_name}")
             logger.info(f"📋 Arguments: {func_args}")
@@ -405,7 +415,7 @@ async def process_message_with_ai(phone_number: str, message_text: str, user_dat
             elif func_name == "update_user_record":
                 result = await handle_update_user_record(phone_number, func_args)
             elif func_name == "show_help":
-                result = await handle_show_help()
+                result = await handle_show_help(phone_number)
             else:
                 result = {"message": "פונקציה לא מוכרת"}
             

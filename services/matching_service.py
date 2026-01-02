@@ -333,16 +333,21 @@ def _calculate_time_tolerance(flexibility_level: str, distance_km: float) -> int
     
     Formula:
     - strict:         30 minutes (fixed)
-    - flexible:       30 + (distance_km / 50) * 30 minutes (max 180)
-    - very_flexible:  30 + (distance_km / 25) * 30 minutes (max 240)
+    - flexible:       30 + (distance_km / 50) * 30 minutes (max 180 = 3h)
+    - very_flexible:  360 minutes (6 hours - fixed!)
     
     Examples:
-    - Ashkelon (12km):      strict=±30min, flexible=±37min, very_flexible=±44min
-    - Mitzpe Ramon (200km): strict=±30min, flexible=±150min, very_flexible=±270min
+    - Ashkelon (12km):      strict=±30min, flexible=±37min, very_flexible=±6h
+    - Beer Sheva (50km):    strict=±30min, flexible=±60min, very_flexible=±6h
+    - Tel Aviv (70km):      strict=±30min, flexible=±72min, very_flexible=±6h
+    - Mitzpe Ramon (200km): strict=±30min, flexible=±180min, very_flexible=±6h
+    
+    Note: very_flexible is ALWAYS 6 hours, regardless of distance!
+    This is used when user doesn't specify a time.
     
     Args:
         flexibility_level: 'strict', 'flexible', or 'very_flexible'
-        distance_km: Distance from origin to destination
+        distance_km: Distance from origin to destination (not used for very_flexible)
         
     Returns:
         Tolerance in minutes
@@ -357,21 +362,31 @@ def _calculate_time_tolerance(flexibility_level: str, distance_km: float) -> int
         return min(int(tolerance), 180)  # Max 3 hours
     
     elif flexibility_level == "very_flexible":
-        # ±30 + (distance_km / 25) * 30 minutes
-        # Example: 200km = ±30 + 8*30 = ±270 minutes (4.5 hours)
-        tolerance = 30 + (distance_km / 25) * 30
-        return min(int(tolerance), 240)  # Max 4 hours
+        # Very flexible = always 6 hours (when user doesn't specify time)
+        # This gives maximum flexibility for hitchhikers
+        return 360  # Always 6 hours
     
     else:
-        # Default to flexible
-        tolerance = 30 + (distance_km / 50) * 30
-        return min(int(tolerance), 180)
+        # Default to very_flexible (if no time specified)
+        return 360  # Always 6 hours
 
 def _format_driver_message(driver: Dict) -> str:
     """Format driver match notification"""
+    # Day translation map
+    DAY_TRANSLATION = {
+        "Sunday": "א'",
+        "Monday": "ב'",
+        "Tuesday": "ג'",
+        "Wednesday": "ד'",
+        "Thursday": "ה'",
+        "Friday": "ו'",
+        "Saturday": "ש'"
+    }
+    
     if driver.get("days"):
-        # Recurring driver
-        days_str = ", ".join([d[:3] for d in driver.get("days", [])])
+        # Recurring driver - translate days to Hebrew
+        hebrew_days = [DAY_TRANSLATION.get(d, d[:3]) for d in driver.get("days", [])]
+        days_str = ", ".join(hebrew_days)
         time_info = f"ימים: {days_str}"
     elif driver.get("travel_date"):
         # One-time driver

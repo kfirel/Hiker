@@ -28,7 +28,7 @@ class HitchhikerData(BaseModel):
     destination: str
     travel_date: Optional[str] = None
     departure_time: Optional[str] = None
-    flexibility: str = "flexible"
+    flexibility: str = "very_flexible"  # Default: very flexible (±6 hours)
     notes: str = ""
     created_at: Optional[str] = None
     active: bool = True  # Can be set to False to deactivate without deleting

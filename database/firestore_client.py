@@ -487,14 +487,9 @@ async def get_drivers_by_route(
                 if not ride.get("active", True):
                     continue
                 
-                # Filter by destination (origin is always גברעם)
-                # ⚡ BUT: If driver has route data, always include them (let matching_service check the route)
-                has_route = ride.get("route_coordinates_flat") is not None
-                
-                if destination and ride.get("destination") and not has_route:
-                    # Only filter by destination if driver has NO route data
-                    if destination.lower() not in ride["destination"].lower():
-                        continue
+                # Note: We don't filter by destination here anymore to allow
+                # matching based on route proximity (e.g., driver to Tel Aviv
+                # can match with hitchhiker to Ashkelon if Ashkelon is on the route)
                 
                 drivers.append({
                     "phone_number": phone_number,
@@ -518,10 +513,7 @@ async def get_drivers_by_route(
             # Also check legacy driver_data for backward compatibility
             driver_info = user_data.get("driver_data", {})
             if driver_info and driver_info.get("destination"):
-                # Filter by destination
-                if destination:
-                    if destination.lower() not in driver_info["destination"].lower():
-                        continue
+                # Note: No destination filtering for legacy data either
                 
                 drivers.append({
                     "phone_number": phone_number,
@@ -575,10 +567,9 @@ async def get_hitchhiker_requests(
                 if not request.get("active", True):
                     continue
                 
-                # Filter by destination
-                if destination and request.get("destination"):
-                    if destination.lower() not in request["destination"].lower():
-                        continue
+                # Note: We don't filter by destination here anymore to allow
+                # matching based on route proximity (e.g., hitchhiker to Ashkelon
+                # can match with driver to Tel Aviv if Ashkelon is on the route)
                 
                 hitchhikers.append({
                     "phone_number": phone_number,
