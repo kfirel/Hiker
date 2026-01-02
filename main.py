@@ -65,6 +65,15 @@ logger = logging.getLogger(__name__)
 logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 logging.getLogger("uvicorn.access").propagate = False
 
+# Log configuration diagnostics
+root_logger = logging.getLogger()
+logger.info(f"🔧 Logger configuration:")
+logger.info(f"   Environment: {'Cloud Run (Production)' if IS_CLOUD_RUN else 'Local (Development)'}")
+logger.info(f"   Root level: {logging.getLevelName(root_logger.level)}")
+logger.info(f"   Handlers: {len(root_logger.handlers)}")
+for h in root_logger.handlers:
+    logger.info(f"   - {h.__class__.__name__}: {logging.getLevelName(h.level)}")
+
 # Initialize FastAPI app
 app = FastAPI(
     title="Gvar'am Hitchhiking Bot",

@@ -8,11 +8,23 @@ logger = logging.getLogger(__name__)
 
 async def find_matches_for_new_record(role: str, record_data: Dict) -> List[Dict]:
     """Main matching function - called after every update"""
-    if role == "driver":
-        return await find_hitchhikers_for_driver(record_data)
-    elif role == "hitchhiker":
-        return await find_drivers_for_hitchhiker(record_data)
-    return []
+    try:
+        logger.info(f"🔍 find_matches_for_new_record called: role={role}, dest={record_data.get('destination')}")
+        
+        if role == "driver":
+            result = await find_hitchhikers_for_driver(record_data)
+            logger.info(f"✅ find_hitchhikers_for_driver returned {len(result)} matches")
+            return result
+        elif role == "hitchhiker":
+            result = await find_drivers_for_hitchhiker(record_data)
+            logger.info(f"✅ find_drivers_for_hitchhiker returned {len(result)} matches")
+            return result
+        
+        logger.warning(f"⚠️ Unknown role: {role}")
+        return []
+    except Exception as e:
+        logger.error(f"❌ Exception in find_matches_for_new_record: {e}", exc_info=True)
+        return []
 
 async def find_drivers_for_hitchhiker(hitchhiker: Dict) -> List[Dict]:
     """Hitchhiker looking for ride → search drivers"""

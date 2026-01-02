@@ -320,8 +320,14 @@ async def handle_update_user_records(phone_number: str, arguments: Dict) -> Dict
     record["name"] = user_name
     
     logger.info(f"🔍 Starting match search for {role}...")
-    matches = await find_matches_for_new_record(role, record)
-    logger.info(f"🎯 Match search complete: {len(matches)} matches found")
+    logger.info(f"📋 Record data: destination={destination}, time={record.get('departure_time')}, date={record.get('travel_date')}, days={record.get('days')}")
+    
+    try:
+        matches = await find_matches_for_new_record(role, record)
+        logger.info(f"🎯 Match search complete: {len(matches)} matches found")
+    except Exception as e:
+        logger.error(f"❌ ERROR in find_matches_for_new_record: {e}", exc_info=True)
+        matches = []  # Continue with empty matches
     
     # Success message (send first, before notifications)
     if role == "driver":
