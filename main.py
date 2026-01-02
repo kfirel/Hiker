@@ -90,6 +90,12 @@ app.include_router(admin.router)
 # Serve React admin dashboard (if built)
 frontend_dist = os.path.join(os.path.dirname(__file__), "frontend", "dist")
 if os.path.exists(frontend_dist):
+    # Mount assets first (higher priority)
+    assets_dir = os.path.join(frontend_dist, "assets")
+    if os.path.exists(assets_dir):
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+    
+    # Then mount the main app
     app.mount("/admin", StaticFiles(directory=frontend_dist, html=True), name="admin")
     logger.info("✅ Admin dashboard available at /admin")
 else:
