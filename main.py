@@ -6,7 +6,10 @@ Hitchhiking bot for Gvar'am community with AI-powered matching
 import logging
 from fastapi import FastAPI, Request, Response, HTTPException, Depends
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
+import os
 
 # Import configuration
 from config import VERIFY_TOKEN, GEMINI_API_KEY, PORT
@@ -15,6 +18,7 @@ from config import VERIFY_TOKEN, GEMINI_API_KEY, PORT
 import admin
 from database import initialize_db, get_db, get_or_create_user
 from webhooks import handle_whatsapp_message
+from middleware.logging_middleware import LoggingMiddleware
 
 # Configure logging for Cloud Run
 import json
@@ -68,8 +72,28 @@ app = FastAPI(
     version="2.0.0"
 )
 
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # In production, specify exact origins
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Add logging middleware
+app.add_middleware(LoggingMiddleware)
+
 # Include admin router
 app.include_router(admin.router)
+
+# Serve React admin dashboard (if built)
+frontend_dist = os.path.join(os.path.dirname(__file__), "frontend", "dist")
+if os.path.exists(frontend_dist):
+    app.mount("/admin", StaticFiles(directory=frontend_dist, html=True), name="admin")
+    logger.info("✅ Admin dashboard available at /admin")
+else:
+    logger.warning("⚠️  Admin dashboard not built - run 'cd frontend && npm run build'")
 
 
 @app.on_event("startup")

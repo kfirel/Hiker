@@ -1,7 +1,27 @@
-# Use official Python runtime as base image
+# ============================================================================
+# Stage 1: Build React Frontend
+# ============================================================================
+FROM node:18-alpine AS frontend-builder
+
+WORKDIR /frontend
+
+# Copy frontend files
+COPY frontend/package.json frontend/package-lock.json* ./
+
+# Install dependencies (only if package-lock.json exists)
+RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
+
+# Copy frontend source
+COPY frontend/ .
+
+# Build frontend
+RUN npm run build
+
+# ============================================================================
+# Stage 2: Python Backend with Frontend
+# ============================================================================
 FROM python:3.11-slim
 
-# Set working directory
 WORKDIR /app
 
 # Copy requirements first for better caching
@@ -22,6 +42,10 @@ COPY services/ ./services/
 COPY whatsapp/ ./whatsapp/
 COPY webhooks/ ./webhooks/
 COPY utils/ ./utils/
+COPY middleware/ ./middleware/
+
+# Copy built frontend from stage 1
+COPY --from=frontend-builder /frontend/dist ./frontend/dist
 
 # Set environment variables
 ENV PORT=8080
