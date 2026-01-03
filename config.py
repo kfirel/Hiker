@@ -19,13 +19,13 @@ GOOGLE_CLOUD_PROJECT = os.getenv("GOOGLE_CLOUD_PROJECT")
 # App settings
 PORT = int(os.getenv("PORT", 8080))
 MAX_CHAT_HISTORY = 100  # Store last 100 messages in database (for admin view)
-AI_CONTEXT_MESSAGES = 10  # Send only last 10 messages to AI (to save costs and keep context short)
+AI_CONTEXT_MESSAGES = 5  # Send only last 5 messages to AI (to save costs and reduce API latency)
 DEFAULT_NOTIFICATION_LEVEL = "all"
 
 # Route Matching - Dynamic Threshold Configuration
 ROUTE_PROXIMITY_MIN_THRESHOLD_KM = 0.5  # Minimum threshold for short routes
 ROUTE_PROXIMITY_MAX_THRESHOLD_KM = 10.0  # Maximum threshold for long routes
-ROUTE_PROXIMITY_SCALE_FACTOR = 5.0  # Every X km of route adds 1 km to threshold
+ROUTE_PROXIMITY_SCALE_FACTOR = 4.0  # Every X km of route adds 1 km to threshold
 
 # API Configuration
 OSRM_API_URL = "http://router.project-osrm.org"

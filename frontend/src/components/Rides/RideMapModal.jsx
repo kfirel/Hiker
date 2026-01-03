@@ -10,10 +10,113 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
 });
 
-function RideMapModal({ ride, onClose }) {
+// Calculate dynamic threshold based on distance from origin
+function calculateDynamicThreshold(distanceFromOriginKm, minThreshold, maxThreshold, scaleFactor) {
+  return Math.min(minThreshold + distanceFromOriginKm / scaleFactor, maxThreshold);
+}
+
+// Calculate distance between two points using Haversine formula
+function calculateDistance(lat1, lon1, lat2, lon2) {
+  const R = 6371; // Earth's radius in km
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = 
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+// Create dynamic buffer around route
+function createDynamicBuffer(coords, minThreshold, maxThreshold, scaleFactor) {
+  if (coords.length < 2) return [];
+  
+  const bufferLeft = [];
+  const bufferRight = [];
+  
+  for (let i = 0; i < coords.length; i++) {
+    const [lat, lon] = coords[i];
+    
+    // Calculate distance from origin along route
+    let distFromOrigin = 0;
+    for (let j = 1; j <= i; j++) {
+      distFromOrigin += calculateDistance(
+        coords[j-1][0], coords[j-1][1],
+        coords[j][0], coords[j][1]
+      );
+    }
+    
+    // Get dynamic threshold for this point
+    const thresholdKm = calculateDynamicThreshold(distFromOrigin, minThreshold, maxThreshold, scaleFactor);
+    
+    // Calculate bearing (direction) of the route at this point
+    let bearing = 0;
+    
+    if (i === 0 && coords.length > 1) {
+      // First point - use direction to next point
+      bearing = calculateBearing(lat, lon, coords[1][0], coords[1][1]);
+    } else if (i === coords.length - 1) {
+      // Last point - use direction from previous point
+      bearing = calculateBearing(coords[i-1][0], coords[i-1][1], lat, lon);
+    } else {
+      // Middle points - average of incoming and outgoing directions
+      const bearingIn = calculateBearing(coords[i-1][0], coords[i-1][1], lat, lon);
+      const bearingOut = calculateBearing(lat, lon, coords[i+1][0], coords[i+1][1]);
+      bearing = (bearingIn + bearingOut) / 2;
+    }
+    
+    // Calculate offset distance in degrees (more accurate for latitude)
+    const latOffsetDegrees = thresholdKm / 111.0; // 1 degree latitude ≈ 111 km
+    const lonOffsetDegrees = thresholdKm / (111.0 * Math.cos(lat * Math.PI / 180)); // Adjust for latitude
+    
+    // Calculate perpendicular bearings (left and right)
+    const leftBearing = bearing - Math.PI / 2;
+    const rightBearing = bearing + Math.PI / 2;
+    
+    // Calculate offset points
+    const leftLat = lat + latOffsetDegrees * Math.sin(leftBearing);
+    const leftLon = lon + lonOffsetDegrees * Math.cos(leftBearing);
+    bufferLeft.push([leftLat, leftLon]);
+    
+    const rightLat = lat + latOffsetDegrees * Math.sin(rightBearing);
+    const rightLon = lon + lonOffsetDegrees * Math.cos(rightBearing);
+    bufferRight.push([rightLat, rightLon]);
+  }
+  
+  // Combine left and right to create closed polygon
+  return [...bufferLeft, ...bufferRight.reverse()];
+}
+
+// Calculate bearing between two points
+function calculateBearing(lat1, lon1, lat2, lon2) {
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const lat1Rad = lat1 * Math.PI / 180;
+  const lat2Rad = lat2 * Math.PI / 180;
+  
+  const y = Math.sin(dLon) * Math.cos(lat2Rad);
+  const x = Math.cos(lat1Rad) * Math.sin(lat2Rad) -
+            Math.sin(lat1Rad) * Math.cos(lat2Rad) * Math.cos(dLon);
+  
+  return Math.atan2(y, x);
+}
+
+function RideMapModal({ ride, matchingParams, onClose }) {
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const [mapError, setMapError] = useState(false);
+
+  // Default values if params not provided (fallback)
+  const minThreshold = matchingParams?.min_threshold_km || 0.5;
+  const maxThreshold = matchingParams?.max_threshold_km || 10.0;
+  const scaleFactor = matchingParams?.scale_factor || 5.0;
+
+  // Debug: Log ride data
+  useEffect(() => {
+    console.log('🗺️ RideMapModal - ride data:', ride);
+    console.log('📍 route_coordinates:', ride.route_coordinates);
+    console.log('🎯 matching params:', matchingParams);
+  }, [ride, matchingParams]);
 
   useEffect(() => {
     const handleEsc = (e) => {
@@ -28,7 +131,11 @@ function RideMapModal({ ride, onClose }) {
     if (!mapRef.current || mapInstanceRef.current) return;
     
     const hasRouteData = ride.route_coordinates && ride.route_coordinates.length > 0;
-    if (!hasRouteData) return;
+    console.log('🔍 hasRouteData:', hasRouteData, 'length:', ride.route_coordinates?.length);
+    if (!hasRouteData) {
+      setMapError(true);
+      return;
+    }
 
     try {
       // Parse coordinates (they come as flat array: [lat1, lon1, lat2, lon2, ...])
@@ -87,15 +194,56 @@ function RideMapModal({ ride, onClose }) {
         .bindPopup(`<b>יעד</b><br>${ride.destination || 'לא ידוע'}`)
         .addTo(map);
 
-      // Add threshold buffer if available
-      if (ride.route_threshold_km) {
-        const thresholdMeters = ride.route_threshold_km * 1000;
-        const buffer = L.polyline(coords, {
-          color: '#10B981',
-          weight: thresholdMeters / 50, // Scale weight based on threshold
-          opacity: 0.15,
-        }).addTo(map);
+      // Add dynamic matching zone as circles along route
+      // Calculate accumulated distance for each point
+      const distances = [0];
+      for (let i = 1; i < coords.length; i++) {
+        const dist = distances[i-1] + calculateDistance(
+          coords[i-1][0], coords[i-1][1],
+          coords[i][0], coords[i][1]
+        );
+        distances.push(dist);
+      }
+      
+      // Draw circles at regular intervals
+      const stepKm = 0.5; // Draw circle every 0.5 km
+      const drawnCircles = [];
+      
+      for (let targetDist = 0; targetDist <= distances[distances.length - 1]; targetDist += stepKm) {
+        // Find the segment containing this distance
+        let segmentIdx = 0;
+        for (let i = 1; i < distances.length; i++) {
+          if (distances[i] >= targetDist) {
+            segmentIdx = i;
+            break;
+          }
+        }
         
+        if (segmentIdx === 0) segmentIdx = 1;
+        
+        // Interpolate position
+        const segStart = distances[segmentIdx - 1];
+        const segEnd = distances[segmentIdx];
+        const ratio = (targetDist - segStart) / (segEnd - segStart);
+        
+        const lat = coords[segmentIdx - 1][0] + ratio * (coords[segmentIdx][0] - coords[segmentIdx - 1][0]);
+        const lon = coords[segmentIdx - 1][1] + ratio * (coords[segmentIdx][1] - coords[segmentIdx - 1][1]);
+        
+        // Calculate dynamic threshold at this distance
+        const thresholdKm = calculateDynamicThreshold(targetDist, minThreshold, maxThreshold, scaleFactor);
+        
+        // Draw circle
+        L.circle([lat, lon], {
+          radius: thresholdKm * 1000, // Convert to meters
+          color: '#34D399',
+          fillColor: '#34D399',
+          fillOpacity: 0.04,  // Very transparent
+          weight: 0,
+          opacity: 0,
+        }).addTo(map);
+      }
+      
+      if (true) {
         // Add legend
         const legend = L.control({ position: 'bottomright' });
         legend.onAdd = function() {
@@ -105,8 +253,14 @@ function RideMapModal({ ride, onClose }) {
           div.style.borderRadius = '8px';
           div.style.boxShadow = '0 2px 8px rgba(0,0,0,0.15)';
           div.innerHTML = `
-            <div style="font-size:12px;font-weight:bold;margin-bottom:5px;">אזור התאמה</div>
-            <div style="font-size:11px;color:#666;">±${ride.route_threshold_km.toFixed(1)} ק"מ מהמסלול</div>
+            <div style="font-size:12px;font-weight:bold;margin-bottom:5px;color:#10B981;">🎯 אזור התאמה דינמי</div>
+            <div style="font-size:11px;color:#666;line-height:1.4;">
+              <div>התחלה: ${minThreshold.toFixed(1)} ק"מ</div>
+              <div>סוף: עד ${maxThreshold.toFixed(1)} ק"מ</div>
+              <div style="margin-top:4px;padding-top:4px;border-top:1px solid #e5e7eb;">
+                <span style="color:#059669;">▬▬▬</span> אזור פיקאפ
+              </div>
+            </div>
           `;
           return div;
         };
@@ -229,7 +383,7 @@ function RideMapModal({ ride, onClose }) {
               </div>
 
               {/* Legend */}
-              <div className="mt-4 flex items-center justify-center gap-6 text-sm">
+              <div className="mt-4 flex items-center justify-center gap-6 text-sm flex-wrap">
                 <div className="flex items-center gap-2">
                   <div className="w-4 h-4 bg-green-500 rounded-full border-2 border-white shadow"></div>
                   <span>נקודת התחלה (🚗)</span>
@@ -237,6 +391,10 @@ function RideMapModal({ ride, onClose }) {
                 <div className="flex items-center gap-2">
                   <div className="w-4 h-4 bg-blue-500 rounded"></div>
                   <span>מסלול הנסיעה</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-4 h-4 bg-green-500 opacity-30 rounded"></div>
+                  <span>אזור פיקאפ 🎯</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <div className="w-4 h-4 bg-red-500 rounded-full border-2 border-white shadow"></div>

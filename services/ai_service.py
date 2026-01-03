@@ -10,6 +10,10 @@ SYSTEM_PROMPT = """אתה עוזר חכם למערכת טרמפים של גבר�
 
 תפקידך: לעזור למשתמשים להזין מידע בצורה טבעית.
 
+⚠️ חשוב: כשאתה מזהה פעולה (כמו שמירת נסיעה), קרא לפונקציה המתאימה באמצעות function calling.
+אל תכתב טקסט כמו "[קורא ל-..." - פשוט הפעל את הפונקציה!
+הדוגמאות למטה מראות מתי לקרוא לפונקציה (לא מה להחזיר כטקסט).
+
 זיהוי תפקידים - חשוב מאוד!
 - נהג (driver): משתמש שאומר "אני נוסע", "אני מגיע", "אני יוצא" - הוא מציע נסיעה!
   * נסיעה קבועה: destination, days ["Sunday", "Monday"...], departure_time
@@ -518,12 +522,19 @@ async def process_message_with_ai(phone_number: str, message_text: str, user_dat
             )
         
         logger.info("🤖 Calling Gemini API...")
+        import time
+        start_time = time.time()
         try:
-            response = await asyncio.wait_for(call_gemini_with_timeout(), timeout=30.0)
-            logger.info("✅ Gemini API response received")
+            response = await asyncio.wait_for(call_gemini_with_timeout(), timeout=45.0)
+            elapsed = time.time() - start_time
+            if elapsed > 10:
+                logger.warning(f"⚠️ Gemini API was SLOW: {elapsed:.2f}s")
+            else:
+                logger.info(f"✅ Gemini API response received in {elapsed:.2f}s")
         except asyncio.TimeoutError:
-            logger.error("⏱️ Gemini API timeout after 30 seconds")
-            await send_whatsapp_message(phone_number, "מצטער, הבקשה לקחה יותר מדי זמן. נסה שוב")
+            elapsed = time.time() - start_time
+            logger.error(f"⏱️ Gemini API timeout after {elapsed:.2f}s")
+            await send_whatsapp_message(phone_number, "⏳ השרת עמוס כרגע. נסה שוב בעוד 10-20 שניות 🔄")
             return
         
         # Handle response - check for function call or text
@@ -559,6 +570,11 @@ async def process_message_with_ai(phone_number: str, message_text: str, user_dat
         else:
             # Regular text response
             reply = first_part.text if hasattr(first_part, 'text') else "קיבלתי!"
+            
+            # Filter out debug messages that AI sometimes returns
+            if reply.startswith("[קורא ל-") or reply.startswith("אתה: [קורא"):
+                logger.warning(f"⚠️ AI returned debug message instead of function call: {reply}")
+                reply = "מעבד את הבקשה..."
         
         # Send reply
         await send_whatsapp_message(phone_number, reply)
@@ -570,3 +586,161 @@ async def process_message_with_ai(phone_number: str, message_text: str, user_dat
     except Exception as e:
         logger.error(f"AI error: {e}", exc_info=True)
         await send_whatsapp_message(phone_number, "מצטער, הייתה בעיה. נסה שוב")
+
+
+# ==================== SANDBOX AI PROCESSING ====================
+
+async def process_message_with_ai_sandbox(phone_number: str, message_text: str, user_data: dict, collection_prefix: str = "test_"):
+    """
+    Process a message with AI for sandbox/testing environment.
+    Uses the REAL production code but with test collections and without WhatsApp.
+    """
+    from database.firestore_client import add_message_to_history_sandbox
+    from services.function_handlers import (
+        handle_update_user_records,
+        handle_view_user_records,
+        handle_delete_user_record,
+        handle_delete_all_user_records,
+        handle_update_user_record,
+        handle_show_help
+    )
+    from utils import get_israel_now
+    
+    logger.info(f"🤖 AI Service START: phone={phone_number}, msg_len={len(message_text)}, collection={collection_prefix}")
+    
+    if not GEMINI_API_KEY:
+        logger.error("❌ No Gemini API key configured!")
+        return "מצטער, שירות ה-AI לא זמין כרגע"
+    
+    logger.info(f"   AI Step 1: Building context...")
+    # Add current date/time context
+    now = get_israel_now()
+    current_context = f"\n\n[מידע נוכחי: תאריך היום: {now.strftime('%Y-%m-%d')}, שעה: {now.strftime('%H:%M')}, יום: {now.strftime('%A')}]"
+    
+    # Build chat history
+    history = user_data.get("chat_history", [])[-AI_CONTEXT_MESSAGES:]
+    messages = [{"role": msg["role"], "parts": [{"text": msg["content"]}]} for msg in history]
+    messages.append({"role": "user", "parts": [{"text": message_text + current_context}]})
+    
+    logger.info(f"   AI Step 2: Context ready - {len(history)} history messages, current message length: {len(message_text)}")
+    
+    try:
+        logger.info(f"   AI Step 3: Creating Gemini client...")
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        logger.info(f"   AI Step 4: Client created successfully")
+        
+        # Add timeout for sandbox too (same as production)
+        import asyncio
+        
+        async def call_gemini_with_timeout():
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(
+                None,
+                lambda: client.models.generate_content(
+                    model="gemini-2.0-flash-exp",
+                    contents=messages,
+                    config=types.GenerateContentConfig(
+                        system_instruction=SYSTEM_PROMPT,
+                        tools=[types.Tool(function_declarations=FUNCTIONS)],
+                        temperature=0.1,
+                    )
+                )
+            )
+        
+        logger.info("   AI Step 5: Starting Gemini API call (sandbox)...")
+        max_retries = 1  # רק ניסיון אחד (לא 2) כדי לא לחכות יותר מדי
+        response = None
+        for attempt in range(max_retries):
+            try:
+                if attempt > 0:
+                    logger.info(f"   AI Step 5.{attempt}: 🔄 Retry attempt {attempt}/{max_retries-1}...")
+                else:
+                    logger.info(f"   AI Step 5.{attempt}: First attempt, calling Gemini...")
+                
+                import time
+                start_time = time.time()
+                response = await asyncio.wait_for(call_gemini_with_timeout(), timeout=45.0)  # 45 שניות במקום 120
+                elapsed = time.time() - start_time
+                
+                if elapsed > 10:
+                    logger.warning(f"   AI Step 6: ⚠️ Gemini API was SLOW: {elapsed:.2f}s (>10s threshold)")
+                else:
+                    logger.info(f"   AI Step 6: ✅ Gemini API response received (sandbox) in {elapsed:.2f}s")
+                break
+            except asyncio.TimeoutError:
+                elapsed = time.time() - start_time
+                if attempt < max_retries - 1:
+                    logger.warning(f"   AI Step 5.{attempt}: ⏱️ Gemini API timeout after {elapsed:.2f}s (attempt {attempt+1}/{max_retries})")
+                    logger.warning(f"   Message length: {len(message_text)}, History length: {len(history)}")
+                    logger.info(f"   Retrying immediately...")
+                    # No sleep - try again immediately
+                else:
+                    logger.error(f"   AI Step 5.{attempt}: ⏱️ FINAL TIMEOUT after {elapsed:.2f}s")
+                    logger.error(f"   Context: msg_len={len(message_text)}, history={len(history)}, phone={phone_number}")
+                    return "⏳ השרת עמוס כרגע (Gemini AI). נסה שוב בעוד 10-20 שניות 🔄"
+            except Exception as e:
+                logger.error(f"   AI Step 5.{attempt}: ❌ Exception during API call: {type(e).__name__}: {str(e)}")
+                if attempt < max_retries - 1:
+                    logger.info(f"   AI Step 5.{attempt}: Retrying after exception...")
+                    await asyncio.sleep(1)
+                else:
+                    raise
+        
+        if not response:
+            logger.error("   AI Step 6: ❌ No response from Gemini API after retries")
+            return "מצטער, הייתה בעיה בתקשורת עם השרת. נסה שוב"
+        
+        logger.info(f"   AI Step 7: Parsing response...")
+        first_part = response.candidates[0].content.parts[0]
+        
+        # Check if function call
+        fc = getattr(first_part, 'function_call', None)
+        if fc:
+            func_name = fc.name
+            func_args = dict(fc.args)
+            
+            logger.info(f"   AI Step 8: 🧪 Function call detected: {func_name}")
+            logger.info(f"   AI Step 8: Function args: {func_args}")
+            
+            # Execute REAL function handlers with collection_prefix
+            logger.info(f"   AI Step 9: Executing handler for {func_name}...")
+            if func_name == "update_user_records":
+                result = await handle_update_user_records(phone_number, func_args, collection_prefix, send_whatsapp=False)
+            elif func_name == "view_user_records":
+                result = await handle_view_user_records(phone_number, collection_prefix)
+            elif func_name == "delete_user_record":
+                result = await handle_delete_user_record(phone_number, func_args, collection_prefix)
+            elif func_name == "delete_all_user_records":
+                result = await handle_delete_all_user_records(phone_number, func_args, collection_prefix)
+            elif func_name == "update_user_record":
+                result = await handle_update_user_record(phone_number, func_args, collection_prefix, send_whatsapp=False)
+            elif func_name == "show_help":
+                result = await handle_show_help(phone_number, collection_prefix)
+            else:
+                logger.warning(f"   AI Step 9: Unknown function: {func_name}")
+                result = {"message": "פונקציה לא מוכרת"}
+            
+            logger.info(f"   AI Step 10: Handler completed, result length: {len(str(result))}")
+            reply = result.get("message", "בוצע!")
+        else:
+            # Regular text response
+            reply = first_part.text if hasattr(first_part, 'text') else "קיבלתי!"
+            
+            # Filter out debug messages that AI sometimes returns
+            if reply.startswith("[קורא ל-") or reply.startswith("אתה: [קורא"):
+                logger.warning(f"⚠️ AI returned debug message instead of function call: {reply}")
+                reply = "מעבד את הבקשה..."
+        
+        # Save to sandbox history
+        logger.info(f"   AI Step 11: Saving to chat history...")
+        await add_message_to_history_sandbox(phone_number, "user", message_text, collection_prefix)
+        logger.info(f"   AI Step 12: User message saved")
+        await add_message_to_history_sandbox(phone_number, "assistant", reply, collection_prefix)
+        logger.info(f"   AI Step 13: Assistant message saved")
+        
+        logger.info(f"   AI Step 14: ✅ AI Service COMPLETE, returning reply (length: {len(reply)})")
+        return reply
+        
+    except Exception as e:
+        logger.error(f"   AI ERROR: 🧪 Sandbox AI error at some step: {type(e).__name__}: {str(e)}", exc_info=True)
+        return "מצטער, הייתה בעיה. נסה שוב"

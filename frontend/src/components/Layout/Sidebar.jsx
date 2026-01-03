@@ -5,6 +5,7 @@ const menuItems = [
   { path: '/users', label: 'משתמשים', icon: '👥' },
   { path: '/rides', label: 'נסיעות', icon: '🚗' },
   { path: '/errors', label: 'שגיאות ולוגים', icon: '⚠️' },
+  { path: '/sandbox', label: 'Sandbox', icon: '🧪' },
 ];
 
 function Sidebar() {

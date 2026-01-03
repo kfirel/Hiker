@@ -17,10 +17,13 @@ const queryClient = new QueryClient({
   },
 })
 
+// Use /admin basename only in production
+const basename = import.meta.env.PROD ? '/admin' : '';
+
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter basename="/admin">
+      <BrowserRouter basename={basename}>
         <App />
       </BrowserRouter>
     </QueryClientProvider>

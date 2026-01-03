@@ -452,7 +452,8 @@ async def calculate_and_save_route_background(
     ride_id: str,
     origin: str,
     destination: str,
-    max_retries: int = None
+    max_retries: int = None,
+    collection_prefix: str = ""
 ):
     """
     Calculate route in background with retry logic (fire-and-forget)
@@ -466,6 +467,7 @@ async def calculate_and_save_route_background(
         origin: Origin address
         destination: Destination address
         max_retries: Maximum number of retry attempts (defaults to config)
+        collection_prefix: Prefix for collection name (e.g., "test_" for sandbox)
     """
     if max_retries is None:
         max_retries = ROUTE_CALC_MAX_RETRIES
@@ -497,7 +499,8 @@ async def calculate_and_save_route_background(
                 success = await update_ride_route_data(
                     phone_number,
                     ride_id,
-                    route_data
+                    route_data,
+                    collection_prefix
                 )
                 
                 if success:

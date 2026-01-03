@@ -255,16 +255,65 @@ async def get_user_details(phone_number: str):
 
 
 if __name__ == "__main__":
+    import subprocess
+    import sys
+    import atexit
+    
     logger.info("🚀 Starting Gvar'am Hitchhiking Bot v2.0")
     logger.info(f"   VERIFY_TOKEN: {'✅' if VERIFY_TOKEN else '❌'}")
     logger.info(f"   GEMINI_API_KEY: {'✅' if GEMINI_API_KEY else '❌'}")
     
+    # Check if running in development (K_SERVICE is only set in Cloud Run)
+    is_dev = os.getenv("K_SERVICE") is None
+    
+    # Start frontend in development mode (unless explicitly disabled)
+    start_frontend = is_dev and "--no-frontend" not in sys.argv
+    vite_process = None
+    
+    if start_frontend:
+        frontend_dir = os.path.join(os.path.dirname(__file__), "frontend")
+        if os.path.exists(frontend_dir):
+            try:
+                logger.info("🎨 Starting Frontend dev server...")
+                vite_process = subprocess.Popen(
+                    ["/opt/homebrew/bin/npm", "run", "dev"],
+                    cwd=frontend_dir,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
+                )
+                
+                def cleanup():
+                    if vite_process:
+                        logger.info("🛑 Stopping frontend dev server...")
+                        vite_process.terminate()
+                        try:
+                            vite_process.wait(timeout=5)
+                        except:
+                            vite_process.kill()
+                
+                atexit.register(cleanup)
+                logger.info("✅ Frontend dev server starting on http://localhost:3000")
+            except Exception as e:
+                logger.warning(f"⚠️  Could not start frontend: {e}")
+    
     # Disable uvicorn access logs (HTTP request logs)
-    uvicorn.run(
-        app, 
-        host="0.0.0.0", 
-        port=PORT,
-        access_log=False,  # Disable "POST /webhook HTTP/1.1" logs
-        log_level="warning"  # Only show warnings and errors from uvicorn
-    )
+    if is_dev and os.getenv("ENABLE_RELOAD", "true").lower() == "true":
+        # Use import string for reload mode
+        uvicorn.run(
+            "main:app",  # Import string for reload
+            host="0.0.0.0", 
+            port=PORT,
+            access_log=False,
+            log_level="warning",
+            reload=True
+        )
+    else:
+        # Production mode - use app object directly
+        uvicorn.run(
+            app, 
+            host="0.0.0.0", 
+            port=PORT,
+            access_log=False,
+            log_level="warning"
+        )
 

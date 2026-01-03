@@ -24,3 +24,6 @@ python-dateutil==2.9.0
 # Testing and visualization
 folium==0.20.0
 
+# Development tools (for IDE debugging)
+debugpy==1.8.19
+

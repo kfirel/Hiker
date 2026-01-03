@@ -6,17 +6,22 @@ from rapidfuzz import fuzz
 
 logger = logging.getLogger(__name__)
 
-async def find_matches_for_new_record(role: str, record_data: Dict) -> List[Dict]:
+async def find_matches_for_new_record(role: str, record_data: Dict, collection_prefix: str = "") -> List[Dict]:
     """Main matching function - called after every update"""
     try:
-        logger.info(f"🔍 find_matches_for_new_record called: role={role}, dest={record_data.get('destination')}")
+        logger.info(f"🔍 find_matches_for_new_record called:")
+        logger.info(f"   Role: {role}")
+        logger.info(f"   Destination: {record_data.get('destination')}")
+        logger.info(f"   Date: {record_data.get('travel_date')}")
+        logger.info(f"   Time: {record_data.get('departure_time')}")
+        logger.info(f"   Collection: {collection_prefix or 'production'}")
         
         if role == "driver":
-            result = await find_hitchhikers_for_driver(record_data)
+            result = await find_hitchhikers_for_driver(record_data, collection_prefix)
             logger.info(f"✅ find_hitchhikers_for_driver returned {len(result)} matches")
             return result
         elif role == "hitchhiker":
-            result = await find_drivers_for_hitchhiker(record_data)
+            result = await find_drivers_for_hitchhiker(record_data, collection_prefix)
             logger.info(f"✅ find_drivers_for_hitchhiker returned {len(result)} matches")
             return result
         
@@ -26,7 +31,7 @@ async def find_matches_for_new_record(role: str, record_data: Dict) -> List[Dict
         logger.error(f"❌ Exception in find_matches_for_new_record: {e}", exc_info=True)
         return []
 
-async def find_drivers_for_hitchhiker(hitchhiker: Dict) -> List[Dict]:
+async def find_drivers_for_hitchhiker(hitchhiker: Dict, collection_prefix: str = "") -> List[Dict]:
     """Hitchhiker looking for ride → search drivers"""
     from database import get_drivers_by_route
     
@@ -34,13 +39,13 @@ async def find_drivers_for_hitchhiker(hitchhiker: Dict) -> List[Dict]:
     date = hitchhiker.get("travel_date")
     time = hitchhiker["departure_time"]
     
-    logger.info(f"🔍 Looking for drivers: dest={dest}, date={date}, time={time}")
+    logger.info(f"🔍 Looking for drivers: dest={dest}, date={date}, time={time}, collection={collection_prefix or 'production'}")
     
     if not date:
         logger.warning(f"⚠️ Hitchhiker missing travel_date: {hitchhiker}")
         return []
     
-    drivers = await get_drivers_by_route(destination=dest)
+    drivers = await get_drivers_by_route(destination=dest, collection_prefix=collection_prefix)
     logger.info(f"📊 Found {len(drivers)} potential drivers")
     matches = []
     
@@ -112,16 +117,16 @@ async def find_drivers_for_hitchhiker(hitchhiker: Dict) -> List[Dict]:
     logger.info(f"Found {len(matches)} drivers for hitchhiker")
     return matches
 
-async def find_hitchhikers_for_driver(driver: Dict) -> List[Dict]:
+async def find_hitchhikers_for_driver(driver: Dict, collection_prefix: str = "") -> List[Dict]:
     """Driver offers ride → search hitchhikers"""
     from database import get_hitchhiker_requests
     
     dest = driver["destination"]
     time = driver["departure_time"]
     
-    logger.info(f"🔍 Looking for hitchhikers: dest={dest}, days={driver.get('days')}, date={driver.get('travel_date')}, time={time}")
+    logger.info(f"🔍 Looking for hitchhikers: dest={dest}, days={driver.get('days')}, date={driver.get('travel_date')}, time={time}, collection={collection_prefix or 'production'}")
     
-    hitchhikers = await get_hitchhiker_requests(destination=dest)
+    hitchhikers = await get_hitchhiker_requests(destination=dest, collection_prefix=collection_prefix)
     logger.info(f"📊 Found {len(hitchhikers)} potential hitchhikers")
     matches = []
     
@@ -194,11 +199,19 @@ async def find_hitchhikers_for_driver(driver: Dict) -> List[Dict]:
     logger.info(f"Found {len(matches)} hitchhikers for driver")
     return matches
 
-async def send_match_notifications(role: str, matches: List[Dict], new_record: Dict):
+async def send_match_notifications(role: str, matches: List[Dict], new_record: Dict, send_whatsapp: bool = True):
     """Send match notifications"""
     from whatsapp.whatsapp_service import send_whatsapp_message
     
     if not matches:
+        logger.info(f"❌ No matches found")
+        return
+    
+    # Skip WhatsApp messages in sandbox mode
+    if not send_whatsapp:
+        logger.info(f"🧪 Sandbox mode: Found {len(matches)} matches but skipping WhatsApp notifications")
+        for match in matches:
+            logger.info(f"   Match: {match.get('phone_number')} - {match.get('destination')}")
         return
     
     if role == "driver":

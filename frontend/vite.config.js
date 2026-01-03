@@ -3,13 +3,23 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [react()],
-  base: '/admin/',
+  // Don't use base in dev - causes 404. Only for production build.
+  base: process.env.NODE_ENV === 'production' ? '/admin/' : '/',
   server: {
     port: 3000,
+    open: true,  // Auto-open browser
     proxy: {
+      // Proxy all API requests to backend
       '/a': {
         target: 'http://localhost:8080',
         changeOrigin: true,
+        timeout: 60000  // 60 seconds
+      },
+      // Also proxy webhooks if testing locally
+      '/webhook': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+        timeout: 60000  // 60 seconds
       }
     }
   },

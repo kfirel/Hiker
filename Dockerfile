@@ -44,6 +44,9 @@ COPY webhooks/ ./webhooks/
 COPY utils/ ./utils/
 COPY middleware/ ./middleware/
 
+# Copy data files (GeoJSON for geocoding)
+COPY data/ ./data/
+
 # Copy built frontend from stage 1
 COPY --from=frontend-builder /frontend/dist ./frontend/dist
 

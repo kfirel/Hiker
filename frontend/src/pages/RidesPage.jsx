@@ -44,6 +44,22 @@ function RidesPage() {
     }
   };
 
+  const handleCalculateRoutes = async () => {
+    if (!confirm('האם לחשב מסלולים לכל הנסיעות? זה עלול לקחת זמן...')) {
+      return;
+    }
+    
+    try {
+      const response = await ridesAPI.calculateRoutes();
+      const result = response.data;
+      alert(`✅ הופעלו ${result.calculations_started} חישובי מסלול!\n\nהמסלולים יחושבו ברקע. רענן את הדף בעוד דקה כדי לראות את המפות.`);
+      // Refetch data after a delay
+      setTimeout(() => refetch(), 60000); // 60 seconds
+    } catch (error) {
+      alert('שגיאה בהפעלת חישוב המסלולים: ' + (error.response?.data?.detail || error.message));
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -57,6 +73,7 @@ function RidesPage() {
 
   const drivers = data?.drivers || [];
   const hitchhikers = data?.hitchhikers || [];
+  const matchingParams = data?.matching_params || null;
 
   return (
     <div className="space-y-6">
@@ -64,14 +81,23 @@ function RidesPage() {
       <div className="bg-white rounded-lg shadow p-6">
         <div className="flex items-center justify-between gap-4 flex-wrap mb-4">
           <h3 className="text-xl font-bold text-gray-900">🚗 כל הנסיעות הפעילות</h3>
-          <div className="flex-1 min-w-[200px] max-w-md">
-            <input
-              type="text"
-              placeholder="סינון לפי יעד..."
-              value={destination}
-              onChange={(e) => setDestination(e.target.value)}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
-            />
+          <div className="flex items-center gap-3">
+            <button
+              onClick={handleCalculateRoutes}
+              className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm font-medium whitespace-nowrap"
+              title="חשב מסלולים לנסיעות ללא נתוני מסלול"
+            >
+              🗺️ חשב מסלולים
+            </button>
+            <div className="flex-1 min-w-[200px] max-w-md">
+              <input
+                type="text"
+                placeholder="סינון לפי יעד..."
+                value={destination}
+                onChange={(e) => setDestination(e.target.value)}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
+              />
+            </div>
           </div>
         </div>
 
@@ -229,6 +255,7 @@ function RidesPage() {
       {selectedRide && (
         <RideMapModal
           ride={selectedRide}
+          matchingParams={matchingParams}
           onClose={() => setSelectedRide(null)}
         />
       )}

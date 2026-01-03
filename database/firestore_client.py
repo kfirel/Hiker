@@ -177,7 +177,8 @@ async def update_user_role_and_data(
 async def add_user_ride_or_request(
     phone_number: str,
     ride_type: str,  # 'driver' or 'hitchhiker' to indicate which list to add to
-    ride_data: Dict[str, Any]
+    ride_data: Dict[str, Any],
+    collection_prefix: str = ""
 ) -> Dict[str, Any]:
     """
     Add a new ride offer or hitchhiking request to user's list
@@ -187,6 +188,7 @@ async def add_user_ride_or_request(
         phone_number: User's phone number
         ride_type: Type of ride ('driver' or 'hitchhiker')
         ride_data: Data for the new ride/request (must include 'id')
+        collection_prefix: Prefix for collection name (e.g., "test_" for sandbox)
     
     Returns:
         Dict with 'success' (bool), 'is_duplicate' (bool), and optional 'message' (str)
@@ -195,7 +197,8 @@ async def add_user_ride_or_request(
         return {"success": False, "is_duplicate": False, "message": "שגיאת חיבור למסד נתונים"}
     
     try:
-        doc_ref = _db.collection("users").document(phone_number)
+        collection_name = f"{collection_prefix}users" if collection_prefix else "users"
+        doc_ref = _db.collection(collection_name).document(phone_number)
         doc = doc_ref.get()
         
         if not doc.exists:
@@ -289,12 +292,13 @@ async def add_user_ride_or_request(
         return {"success": False, "is_duplicate": False, "message": f"שגיאה בשמירה: {str(e)}"}
 
 
-async def get_user_rides_and_requests(phone_number: str) -> Dict[str, Any]:
+async def get_user_rides_and_requests(phone_number: str, collection_prefix: str = "") -> Dict[str, Any]:
     """
     Get all active rides and requests for a user
     
     Args:
         phone_number: User's phone number
+        collection_prefix: Prefix for collection name (e.g., "test_" for sandbox)
     
     Returns:
         Dictionary with driver_rides and hitchhiker_requests lists
@@ -303,7 +307,8 @@ async def get_user_rides_and_requests(phone_number: str) -> Dict[str, Any]:
         return {"driver_rides": [], "hitchhiker_requests": []}
     
     try:
-        doc_ref = _db.collection("users").document(phone_number)
+        collection_name = f"{collection_prefix}users" if collection_prefix else "users"
+        doc_ref = _db.collection(collection_name).document(phone_number)
         doc = doc_ref.get()
         
         if not doc.exists:
@@ -326,7 +331,8 @@ async def get_user_rides_and_requests(phone_number: str) -> Dict[str, Any]:
 async def remove_user_ride_or_request(
     phone_number: str,
     role: str,
-    ride_id: str
+    ride_id: str,
+    collection_prefix: str = ""
 ) -> bool:
     """
     Remove (deactivate) a specific ride or request by ID
@@ -335,6 +341,7 @@ async def remove_user_ride_or_request(
         phone_number: User's phone number
         role: 'driver' or 'hitchhiker'
         ride_id: The unique ID of the ride/request to remove
+        collection_prefix: Optional prefix for collection name (e.g., "test_")
     
     Returns:
         True if successful, False otherwise
@@ -343,7 +350,8 @@ async def remove_user_ride_or_request(
         return False
     
     try:
-        doc_ref = _db.collection("users").document(phone_number)
+        collection_name = f"{collection_prefix}users"
+        doc_ref = _db.collection(collection_name).document(phone_number)
         doc = doc_ref.get()
         
         if not doc.exists:
@@ -388,7 +396,8 @@ async def update_user_ride_or_request(
     phone_number: str,
     role: str,
     ride_id: str,
-    updates: Dict[str, Any]
+    updates: Dict[str, Any],
+    collection_prefix: str = ""
 ) -> bool:
     """
     Update specific fields in an existing ride or request by ID
@@ -398,6 +407,7 @@ async def update_user_ride_or_request(
         role: 'driver' or 'hitchhiker'
         ride_id: The unique ID of the ride/request to update
         updates: Dictionary of fields to update (e.g., {"departure_time": "15:00", "destination": "חיפה"})
+        collection_prefix: Prefix for collection name (e.g., "test_" for sandbox)
     
     Returns:
         True if successful, False otherwise
@@ -406,7 +416,8 @@ async def update_user_ride_or_request(
         return False
     
     try:
-        doc_ref = _db.collection("users").document(phone_number)
+        collection_name = f"{collection_prefix}users" if collection_prefix else "users"
+        doc_ref = _db.collection(collection_name).document(phone_number)
         doc = doc_ref.get()
         
         if not doc.exists:
@@ -455,7 +466,8 @@ async def update_user_ride_or_request(
 
 async def get_drivers_by_route(
     origin: Optional[str] = None,
-    destination: Optional[str] = None
+    destination: Optional[str] = None,
+    collection_prefix: str = ""
 ) -> List[Dict[str, Any]]:
     """
     Search for drivers matching specific route
@@ -463,6 +475,7 @@ async def get_drivers_by_route(
     Args:
         origin: Starting location (optional)
         destination: Destination location (optional)
+        collection_prefix: Prefix for collection name (e.g., "test_" for sandbox)
     
     Returns:
         List of matching driver records
@@ -472,7 +485,8 @@ async def get_drivers_by_route(
     
     try:
         # Get all users and check their driver_rides
-        docs = _db.collection("users").stream()
+        collection_name = f"{collection_prefix}users" if collection_prefix else "users"
+        docs = _db.collection(collection_name).stream()
         
         drivers = []
         for doc in docs:
@@ -536,13 +550,15 @@ async def get_drivers_by_route(
 
 
 async def get_hitchhiker_requests(
-    destination: Optional[str] = None
+    destination: Optional[str] = None,
+    collection_prefix: str = ""
 ) -> List[Dict[str, Any]]:
     """
     Get hitchhiker requests, optionally filtered by destination
     
     Args:
         destination: Filter by destination (optional)
+        collection_prefix: Prefix for collection name (e.g., "test_" for sandbox)
     
     Returns:
         List of hitchhiker records
@@ -552,7 +568,8 @@ async def get_hitchhiker_requests(
     
     try:
         # Get all users and check their hitchhiker_requests
-        docs = _db.collection("users").stream()
+        collection_name = f"{collection_prefix}users" if collection_prefix else "users"
+        docs = _db.collection(collection_name).stream()
         
         hitchhikers = []
         for doc in docs:
@@ -611,7 +628,8 @@ async def get_hitchhiker_requests(
 async def update_ride_route_data(
     phone_number: str,
     ride_id: str,
-    route_data: Dict
+    route_data: Dict,
+    collection_prefix: str = ""
 ) -> bool:
     """
     Update route data for a ride (called from background task or lazy loading)
@@ -620,6 +638,7 @@ async def update_ride_route_data(
         phone_number: User's phone number
         ride_id: Ride ID
         route_data: Dictionary with coordinates, distance_km, threshold_km
+        collection_prefix: Prefix for collection name (e.g., "test_" for sandbox)
         
     Returns:
         True if successful, False otherwise
@@ -629,7 +648,8 @@ async def update_ride_route_data(
         return False
     
     try:
-        doc_ref = _db.collection("users").document(phone_number)
+        collection_name = f"{collection_prefix}users" if collection_prefix else "users"
+        doc_ref = _db.collection(collection_name).document(phone_number)
         doc = doc_ref.get()
         
         if not doc.exists:
@@ -667,5 +687,75 @@ async def update_ride_route_data(
         
     except Exception as e:
         logger.error(f"❌ Error updating route data: {e}")
+        return False
+
+
+# ==================== SANDBOX FUNCTIONS ====================
+# These functions are used for testing in the admin sandbox environment
+
+async def get_or_create_user_sandbox(phone_number: str, name: str, collection_prefix: str = "test_"):
+    """Get or create a user in sandbox/test environment"""
+    db = get_db()
+    if not db:
+        return None, False
+    
+    collection_name = f"{collection_prefix}users"
+    user_ref = db.collection(collection_name).document(phone_number)
+    user_doc = user_ref.get()
+    
+    if user_doc.exists:
+        return user_doc.to_dict(), False
+    else:
+        # Create new test user
+        new_user = {
+            "phone_number": phone_number,
+            "name": name,
+            "chat_history": [],
+            "driver_rides": [],
+            "hitchhiker_rides": [],
+            "created_at": israel_now_isoformat(),
+            "last_message_at": israel_now_isoformat()
+        }
+        user_ref.set(new_user)
+        logger.info(f"🧪 Created sandbox user: {phone_number} in {collection_name}")
+        return new_user, True
+
+
+async def add_message_to_history_sandbox(phone_number: str, role: str, content: str, collection_prefix: str = "test_"):
+    """Add a message to user's chat history in sandbox/test environment"""
+    db = get_db()
+    if not db:
+        return False
+    
+    collection_name = f"{collection_prefix}users"
+    user_ref = db.collection(collection_name).document(phone_number)
+    
+    message = {
+        "role": role,
+        "content": content,
+        "timestamp": israel_now_isoformat()
+    }
+    
+    try:
+        user_doc = user_ref.get()
+        if user_doc.exists:
+            user_data = user_doc.to_dict()
+            chat_history = user_data.get("chat_history", [])
+            chat_history.append(message)
+            
+            # Keep last 100 messages
+            if len(chat_history) > 100:
+                chat_history = chat_history[-100:]
+            
+            user_ref.update({
+                "chat_history": chat_history,
+                "last_message_at": israel_now_isoformat()
+            })
+            return True
+        else:
+            logger.warning(f"User {phone_number} not found in {collection_name}")
+            return False
+    except Exception as e:
+        logger.error(f"Error adding message to sandbox history: {e}")
         return False
 

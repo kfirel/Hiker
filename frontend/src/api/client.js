@@ -77,6 +77,8 @@ export const ridesAPI = {
     const query = rideType ? `?ride_type=${rideType}` : '';
     return apiClient.get(`/rides/export/csv${query}`, { responseType: 'blob' });
   },
+  calculateRoutes: () => 
+    apiClient.post('/rides/calculate-routes'),
 };
 
 export default apiClient;

@@ -110,14 +110,31 @@ def _format_user_records_list(driver_rides: List[Dict], hitchhiker_requests: Lis
     
     return msg.strip()
 
-async def handle_update_user_records(phone_number: str, arguments: Dict) -> Dict:
+async def handle_update_user_records(phone_number: str, arguments: Dict, collection_prefix: str = "", send_whatsapp: bool = True) -> Dict:
     """Handle update_user_records function call"""
-    from database import add_user_ride_or_request, get_or_create_user, get_user_rides_and_requests
+    from database import add_user_ride_or_request, get_user_rides_and_requests
     from services.matching_service import find_matches_for_new_record, send_match_notifications
     
-    # Get user name
-    user_data, _ = await get_or_create_user(phone_number)
-    user_name = user_data.get("name", "משתמש")
+    # Get user name (from the sandbox user data if in sandbox mode)
+    if collection_prefix:
+        # Sandbox mode - get from test collection
+        user_data = await get_user_rides_and_requests(phone_number, collection_prefix)
+        # Try to get name from first query, or use default
+        from database import get_db
+        db = get_db()
+        if db:
+            doc = db.collection(f"{collection_prefix}users").document(phone_number).get()
+            if doc.exists:
+                user_name = doc.to_dict().get("name", "משתמש")
+            else:
+                user_name = "משתמש"
+        else:
+            user_name = "משתמש"
+    else:
+        # Production mode - use regular function
+        from database import get_or_create_user
+        user_data, _ = await get_or_create_user(phone_number)
+        user_name = user_data.get("name", "משתמש")
     
     role = arguments.get("role")
     origin = arguments.get("origin", "גברעם")  # Default to גברעם
@@ -194,7 +211,7 @@ async def handle_update_user_records(phone_number: str, arguments: Dict) -> Dict
         # 1. Outbound record
         outbound_record = build_record(origin, destination, departure_time)
         logger.info(f"💾 Saving outbound record: {outbound_record}")
-        result1 = await add_user_ride_or_request(phone_number, role, outbound_record)
+        result1 = await add_user_ride_or_request(phone_number, role, outbound_record, collection_prefix)
         
         if not result1.get("success"):
             # If duplicate, return friendly message
@@ -205,7 +222,7 @@ async def handle_update_user_records(phone_number: str, arguments: Dict) -> Dict
         # 2. Return record (reversed)
         return_record = build_record(destination, origin, return_time)
         logger.info(f"💾 Saving return record: {return_record}")
-        result2 = await add_user_ride_or_request(phone_number, role, return_record)
+        result2 = await add_user_ride_or_request(phone_number, role, return_record, collection_prefix)
         
         if not result2.get("success"):
             # If duplicate, return friendly message
@@ -224,14 +241,16 @@ async def handle_update_user_records(phone_number: str, arguments: Dict) -> Dict
                 phone_number,
                 outbound_record["id"],
                 origin,
-                destination
+                destination,
+                collection_prefix=collection_prefix
             ))
             
             asyncio.create_task(calculate_and_save_route_background(
                 phone_number,
                 return_record["id"],
                 destination,
-                origin
+                origin,
+                collection_prefix=collection_prefix
             ))
             logger.info(f"🔄 Route calculations started in background")
         
@@ -241,10 +260,10 @@ async def handle_update_user_records(phone_number: str, arguments: Dict) -> Dict
         
         # Run matching for BOTH
         logger.info(f"🔍 Starting match search for outbound trip...")
-        matches_outbound = await find_matches_for_new_record(role, outbound_record)
+        matches_outbound = await find_matches_for_new_record(role, outbound_record, collection_prefix)
         
         logger.info(f"🔍 Starting match search for return trip...")
-        matches_return = await find_matches_for_new_record(role, return_record)
+        matches_return = await find_matches_for_new_record(role, return_record, collection_prefix)
         
         # Build success message (send before notifications)
         total_matches = len(matches_outbound) + len(matches_return)
@@ -256,7 +275,7 @@ async def handle_update_user_records(phone_number: str, arguments: Dict) -> Dict
             msg += f"\n\n🎯 נמצאו {total_matches} התאמות!"
         
         # Get updated list and append
-        data = await get_user_rides_and_requests(phone_number)
+        data = await get_user_rides_and_requests(phone_number, collection_prefix)
         list_msg = _format_user_records_list(
             data.get("driver_rides", []),
             data.get("hitchhiker_requests", [])
@@ -271,9 +290,9 @@ async def handle_update_user_records(phone_number: str, arguments: Dict) -> Dict
             async def send_notifications_delayed():
                 await asyncio.sleep(0.5)  # Small delay to ensure success message is sent first
                 if matches_outbound:
-                    await send_match_notifications(role, matches_outbound, outbound_record)
+                    await send_match_notifications(role, matches_outbound, outbound_record, send_whatsapp)
                 if matches_return:
-                    await send_match_notifications(role, matches_return, return_record)
+                    await send_match_notifications(role, matches_return, return_record, send_whatsapp)
             
             asyncio.create_task(send_notifications_delayed())
         
@@ -284,13 +303,13 @@ async def handle_update_user_records(phone_number: str, arguments: Dict) -> Dict
     
     # Save to DB
     logger.info(f"💾 Saving {role} record: {record}")
-    result = await add_user_ride_or_request(phone_number, role, record)
+    result = await add_user_ride_or_request(phone_number, role, record, collection_prefix)
     
     if not result.get("success"):
         # If duplicate, return friendly message with current list
         if result.get("is_duplicate"):
             # Get current list
-            data = await get_user_rides_and_requests(phone_number)
+            data = await get_user_rides_and_requests(phone_number, collection_prefix)
             list_msg = _format_user_records_list(
                 data.get("driver_rides", []),
                 data.get("hitchhiker_requests", [])
@@ -310,7 +329,8 @@ async def handle_update_user_records(phone_number: str, arguments: Dict) -> Dict
             phone_number,
             record["id"],
             origin,
-            destination
+            destination,
+            collection_prefix=collection_prefix
         ))
         logger.info(f"🔄 Route calculation started in background")
     
@@ -323,7 +343,7 @@ async def handle_update_user_records(phone_number: str, arguments: Dict) -> Dict
     logger.info(f"📋 Record data: destination={destination}, time={record.get('departure_time')}, date={record.get('travel_date')}, days={record.get('days')}")
     
     try:
-        matches = await find_matches_for_new_record(role, record)
+        matches = await find_matches_for_new_record(role, record, collection_prefix)
         logger.info(f"🎯 Match search complete: {len(matches)} matches found")
     except Exception as e:
         logger.error(f"❌ ERROR in find_matches_for_new_record: {e}", exc_info=True)
@@ -350,7 +370,7 @@ async def handle_update_user_records(phone_number: str, arguments: Dict) -> Dict
     
     # Get updated list and append
     from database import get_user_rides_and_requests
-    data = await get_user_rides_and_requests(phone_number)
+    data = await get_user_rides_and_requests(phone_number, collection_prefix)
     list_msg = _format_user_records_list(
         data.get("driver_rides", []),
         data.get("hitchhiker_requests", [])
@@ -358,23 +378,47 @@ async def handle_update_user_records(phone_number: str, arguments: Dict) -> Dict
     
     msg += f"\n\n📋 הנסיעות שלך עכשיו:\n\n{list_msg}"
     
-    # Send match notifications AFTER the success message (with small delay)
-    if matches:
+    # In sandbox mode (send_whatsapp=False), include match details in the main message
+    if matches and not send_whatsapp:
+        logger.info(f"📝 Adding {len(matches)} match details to message (sandbox mode)")
+        logger.info(f"   Current message length before adding matches: {len(msg)}")
+        from services import matching_service
+        msg += "\n\n💡 התאמות שנמצאו:"
+        for i, match in enumerate(matches, 1):
+            try:
+                if role == "hitchhiker":
+                    # Show driver details
+                    logger.info(f"   Formatting driver {i}: {match.get('phone_number')} to {match.get('destination')}")
+                    match_msg = matching_service._format_driver_message(match)
+                else:
+                    # Show hitchhiker details
+                    logger.info(f"   Formatting hitchhiker {i}: {match.get('phone_number')} to {match.get('destination')}")
+                    match_msg = matching_service._format_hitchhiker_message(match, destination)
+                logger.info(f"   Match message length: {len(match_msg)}")
+                msg += f"\n\n{i}. {match_msg}"
+            except Exception as e:
+                logger.error(f"   ❌ Error formatting match {i}: {type(e).__name__}: {str(e)}", exc_info=True)
+                msg += f"\n\n{i}. שגיאה בפורמט ההתאמה"
+        
+        logger.info(f"   ✅ Finished adding matches, final message length: {len(msg)}")
+    
+    # Send match notifications AFTER the success message (with small delay) - only in production
+    if matches and send_whatsapp:
         import asyncio
         
         async def send_notifications_delayed():
             await asyncio.sleep(0.5)  # Small delay to ensure success message is sent first
-            await send_match_notifications(role, matches, record)
+            await send_match_notifications(role, matches, record, send_whatsapp)
         
         asyncio.create_task(send_notifications_delayed())
     
     return {"status": "success", "message": msg}
 
-async def handle_view_user_records(phone_number: str) -> Dict:
+async def handle_view_user_records(phone_number: str, collection_prefix: str = "") -> Dict:
     """Handle view_user_records function call"""
     from database import get_user_rides_and_requests
     
-    data = await get_user_rides_and_requests(phone_number)
+    data = await get_user_rides_and_requests(phone_number, collection_prefix)
     drivers = data.get("driver_rides", [])
     hitchhikers = data.get("hitchhiker_requests", [])
     
@@ -384,7 +428,7 @@ async def handle_view_user_records(phone_number: str) -> Dict:
     msg = _format_user_records_list(drivers, hitchhikers)
     return {"status": "success", "message": msg}
 
-async def handle_delete_user_record(phone_number: str, arguments: Dict) -> Dict:
+async def handle_delete_user_record(phone_number: str, arguments: Dict, collection_prefix: str = "") -> Dict:
     """Handle delete_user_record function call"""
     from database import remove_user_ride_or_request, get_user_rides_and_requests
     
@@ -395,7 +439,7 @@ async def handle_delete_user_record(phone_number: str, arguments: Dict) -> Dict:
         return {"status": "error", "message": "חסר מספר נסיעה או תפקיד"}
     
     # Get user's records
-    data = await get_user_rides_and_requests(phone_number)
+    data = await get_user_rides_and_requests(phone_number, collection_prefix)
     
     if role == "driver":
         records = data.get("driver_rides", [])
@@ -419,13 +463,13 @@ async def handle_delete_user_record(phone_number: str, arguments: Dict) -> Dict:
         return {"status": "error", "message": "שגיאה: הרשומה לא מכילה מזהה"}
     
     # Delete by actual ID
-    success = await remove_user_ride_or_request(phone_number, role, record_id)
+    success = await remove_user_ride_or_request(phone_number, role, record_id, collection_prefix)
     
     if not success:
         return {"status": "error", "message": "מחיקה נכשלה"}
     
     # Get updated list
-    data = await get_user_rides_and_requests(phone_number)
+    data = await get_user_rides_and_requests(phone_number, collection_prefix)
     list_msg = _format_user_records_list(
         data.get("driver_rides", []),
         data.get("hitchhiker_requests", [])
@@ -436,7 +480,7 @@ async def handle_delete_user_record(phone_number: str, arguments: Dict) -> Dict:
         "message": f"{record_type} {record_number}) נמחק/ה בהצלחה! ✅\n\n📋 הנסיעות שלך עכשיו:\n\n{list_msg}"
     }
 
-async def handle_delete_all_user_records(phone_number: str, arguments: Dict) -> Dict:
+async def handle_delete_all_user_records(phone_number: str, arguments: Dict, collection_prefix: str = "") -> Dict:
     """Handle delete_all_user_records function call - delete all records of a type or everything"""
     from database import remove_user_ride_or_request, get_user_rides_and_requests
     
@@ -446,7 +490,7 @@ async def handle_delete_all_user_records(phone_number: str, arguments: Dict) -> 
         return {"status": "error", "message": "חסר תפקיד"}
     
     # Get user's records
-    data = await get_user_rides_and_requests(phone_number)
+    data = await get_user_rides_and_requests(phone_number, collection_prefix)
     
     # Handle "all" - delete both drivers and hitchhikers
     if role == "all":
@@ -461,7 +505,7 @@ async def handle_delete_all_user_records(phone_number: str, arguments: Dict) -> 
         for record in driver_records:
             record_id = record.get("id")
             if record_id:
-                success = await remove_user_ride_or_request(phone_number, "driver", record_id)
+                success = await remove_user_ride_or_request(phone_number, "driver", record_id, collection_prefix)
                 if success:
                     deleted_drivers += 1
         
@@ -470,7 +514,7 @@ async def handle_delete_all_user_records(phone_number: str, arguments: Dict) -> 
         for record in hitchhiker_records:
             record_id = record.get("id")
             if record_id:
-                success = await remove_user_ride_or_request(phone_number, "hitchhiker", record_id)
+                success = await remove_user_ride_or_request(phone_number, "hitchhiker", record_id, collection_prefix)
                 if success:
                     deleted_hitchhikers += 1
         
@@ -496,12 +540,12 @@ async def handle_delete_all_user_records(phone_number: str, arguments: Dict) -> 
     for record in records:
         record_id = record.get("id")
         if record_id:
-            success = await remove_user_ride_or_request(phone_number, role, record_id)
+            success = await remove_user_ride_or_request(phone_number, role, record_id, collection_prefix)
             if success:
                 deleted_count += 1
     
     # Get updated list
-    data = await get_user_rides_and_requests(phone_number)
+    data = await get_user_rides_and_requests(phone_number, collection_prefix)
     list_msg = _format_user_records_list(
         data.get("driver_rides", []),
         data.get("hitchhiker_requests", [])
@@ -518,7 +562,7 @@ async def handle_delete_all_user_records(phone_number: str, arguments: Dict) -> 
         "message": f"כל ה{record_type} נמחקו בהצלחה! ✅ ({deleted_count} נמחקו)\n\n📋 הנסיעות שלך עכשיו:\n\n{list_msg}"
     }
 
-async def handle_update_user_record(phone_number: str, arguments: Dict) -> Dict:
+async def handle_update_user_record(phone_number: str, arguments: Dict, collection_prefix: str = "", send_whatsapp: bool = True) -> Dict:
     """Handle update_user_record function call - update existing ride/request"""
     from database import get_user_rides_and_requests, update_user_ride_or_request
     from services.matching_service import find_matches_for_new_record, send_match_notifications
@@ -530,7 +574,7 @@ async def handle_update_user_record(phone_number: str, arguments: Dict) -> Dict:
         return {"status": "error", "message": "חסר מספר נסיעה או תפקיד"}
     
     # Get user's records
-    data = await get_user_rides_and_requests(phone_number)
+    data = await get_user_rides_and_requests(phone_number, collection_prefix)
     
     if role == "driver":
         records = data.get("driver_rides", [])
@@ -590,13 +634,13 @@ async def handle_update_user_record(phone_number: str, arguments: Dict) -> Dict:
         updates["route_calculation_pending"] = True
     
     # Update in DB
-    success = await update_user_ride_or_request(phone_number, role, record_id, updates)
+    success = await update_user_ride_or_request(phone_number, role, record_id, updates, collection_prefix)
     
     if not success:
         return {"status": "error", "message": "עדכון נכשל"}
     
     # Get updated record for matching
-    data = await get_user_rides_and_requests(phone_number)
+    data = await get_user_rides_and_requests(phone_number, collection_prefix)
     if role == "driver":
         updated_record = data.get("driver_rides", [])[record_number - 1]
     else:
@@ -611,7 +655,8 @@ async def handle_update_user_record(phone_number: str, arguments: Dict) -> Dict:
             phone_number,
             record_id,
             updated_record.get("origin", "גברעם"),
-            updated_record.get("destination")
+            updated_record.get("destination"),
+            collection_prefix=collection_prefix
         ))
         logger.info(f"🔄 Route recalculation started in background for {record_id}")
     
@@ -620,7 +665,7 @@ async def handle_update_user_record(phone_number: str, arguments: Dict) -> Dict:
     
     # Re-run matching!
     logger.info(f"🔍 Re-running match search after update...")
-    matches = await find_matches_for_new_record(role, updated_record)
+    matches = await find_matches_for_new_record(role, updated_record, collection_prefix)
     
     # Build success message (send before notifications)
     update_str = ", ".join(update_messages)
@@ -630,7 +675,7 @@ async def handle_update_user_record(phone_number: str, arguments: Dict) -> Dict:
         msg += f"\n\n🎯 נמצאו {len(matches)} התאמות חדשות!"
     
     # Get updated list
-    data = await get_user_rides_and_requests(phone_number)
+    data = await get_user_rides_and_requests(phone_number, collection_prefix)
     list_msg = _format_user_records_list(
         data.get("driver_rides", []),
         data.get("hitchhiker_requests", [])
@@ -644,13 +689,13 @@ async def handle_update_user_record(phone_number: str, arguments: Dict) -> Dict:
         
         async def send_notifications_delayed():
             await asyncio.sleep(0.5)  # Small delay to ensure success message is sent first
-            await send_match_notifications(role, matches, updated_record)
+            await send_match_notifications(role, matches, updated_record, send_whatsapp)
         
         asyncio.create_task(send_notifications_delayed())
     
     return {"status": "success", "message": msg}
 
-async def handle_show_help(phone_number: str) -> Dict:
+async def handle_show_help(phone_number: str, collection_prefix: str = "") -> Dict:
     """
     Handle show_help function call - display help message or user's trips
     
@@ -661,7 +706,7 @@ async def handle_show_help(phone_number: str) -> Dict:
     from config import HELP_MESSAGE
     
     # Get user's current trips
-    data = await get_user_rides_and_requests(phone_number)
+    data = await get_user_rides_and_requests(phone_number, collection_prefix)
     driver_rides = data.get("driver_rides", [])
     hitchhiker_requests = data.get("hitchhiker_requests", [])
     

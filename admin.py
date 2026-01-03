@@ -5,6 +5,7 @@ Secure endpoints and commands for testing and management
 
 import os
 import logging
+import asyncio
 from typing import Optional, List
 from fastapi import APIRouter, Header, HTTPException, Depends
 from pydantic import BaseModel
@@ -716,6 +717,20 @@ async def get_active_rides(
                     if destination and destination.lower() not in ride.get("destination", "").lower():
                         continue
                     
+                    # Get route coordinates - support multiple formats
+                    route_coords = ride.get("route_coordinates_flat") or ride.get("route_coordinates")
+                    
+                    # Handle old format: dict with numeric keys {0: lat, 1: lon, 2: lat, ...}
+                    if isinstance(route_coords, dict) and route_coords:
+                        try:
+                            # Sort by numeric keys and create flat list
+                            sorted_keys = sorted([int(k) for k in route_coords.keys()])
+                            route_coords = [route_coords[str(k)] for k in sorted_keys]
+                            logger.info(f"✅ Converted dict format to flat list: {len(route_coords)} values")
+                        except (ValueError, KeyError, TypeError) as e:
+                            logger.warning(f"⚠️ Failed to convert route_coords dict: {e}")
+                            route_coords = None
+                    
                     drivers.append({
                         "id": ride.get("id"),
                         "phone_number": phone,
@@ -728,7 +743,7 @@ async def get_active_rides(
                         "return_time": ride.get("return_time"),
                         "notes": ride.get("notes", ""),
                         "created_at": ride.get("created_at"),
-                        "route_coordinates": ride.get("route_coordinates"),
+                        "route_coordinates": route_coords,
                         "route_distance_km": ride.get("route_distance_km"),
                         "route_threshold_km": ride.get("route_threshold_km")
                     })
@@ -744,6 +759,17 @@ async def get_active_rides(
                     if destination and destination.lower() not in request.get("destination", "").lower():
                         continue
                     
+                    # Get route coordinates - support multiple formats
+                    route_coords = request.get("route_coordinates_flat") or request.get("route_coordinates")
+                    
+                    # Handle old format: dict with numeric keys
+                    if isinstance(route_coords, dict) and route_coords:
+                        try:
+                            sorted_keys = sorted([int(k) for k in route_coords.keys()])
+                            route_coords = [route_coords[str(k)] for k in sorted_keys]
+                        except (ValueError, KeyError, TypeError):
+                            route_coords = None
+                    
                     hitchhikers.append({
                         "id": request.get("id"),
                         "phone_number": phone,
@@ -755,16 +781,28 @@ async def get_active_rides(
                         "flexibility": request.get("flexibility", "flexible"),
                         "notes": request.get("notes", ""),
                         "created_at": request.get("created_at"),
-                        "route_coordinates": request.get("route_coordinates"),
+                        "route_coordinates": route_coords,
                         "route_distance_km": request.get("route_distance_km"),
                         "route_threshold_km": request.get("route_threshold_km")
                     })
+        
+        # Import matching algorithm parameters
+        from config import (
+            ROUTE_PROXIMITY_MIN_THRESHOLD_KM,
+            ROUTE_PROXIMITY_MAX_THRESHOLD_KM,
+            ROUTE_PROXIMITY_SCALE_FACTOR
+        )
         
         return {
             "drivers": drivers,
             "hitchhikers": hitchhikers,
             "total_drivers": len(drivers),
-            "total_hitchhikers": len(hitchhikers)
+            "total_hitchhikers": len(hitchhikers),
+            "matching_params": {
+                "min_threshold_km": ROUTE_PROXIMITY_MIN_THRESHOLD_KM,
+                "max_threshold_km": ROUTE_PROXIMITY_MAX_THRESHOLD_KM,
+                "scale_factor": ROUTE_PROXIMITY_SCALE_FACTOR
+            }
         }
     
     except Exception as e:
@@ -909,7 +947,8 @@ async def export_rides_csv(
 async def handle_admin_whatsapp_command(
     phone_number: str,
     message: str,
-    db: firestore.Client
+    db: firestore.Client,
+    collection_prefix: str = ""
 ) -> Optional[str]:
     """
     Handle admin commands sent via WhatsApp
@@ -962,7 +1001,8 @@ async def handle_admin_whatsapp_command(
             new_number = parts[3]
             
             # Get user data
-            original_doc = db.collection("users").document(phone_number).get()
+            collection_name = f"{collection_prefix}users"
+            original_doc = db.collection(collection_name).document(phone_number).get()
             
             if original_doc.exists:
                 user_data = original_doc.to_dict()
@@ -970,10 +1010,10 @@ async def handle_admin_whatsapp_command(
                 user_data["last_seen"] = israel_now_isoformat()
                 
                 # Create new document
-                db.collection("users").document(new_number).set(user_data)
+                db.collection(collection_name).document(new_number).set(user_data)
                 
                 # Delete original
-                db.collection("users").document(phone_number).delete()
+                db.collection(collection_name).document(phone_number).delete()
                 
                 logger.info(f"✅ Admin WhatsApp: Changed {phone_number} → {new_number}")
                 
@@ -985,9 +1025,10 @@ async def handle_admin_whatsapp_command(
         elif command == "d" and len(parts) > 2:
             confirm = parts[2]
             
-            db.collection("users").document(phone_number).delete()
+            collection_name = f"{collection_prefix}users"
+            db.collection(collection_name).document(phone_number).delete()
             
-            logger.info(f"🗑️  Admin WhatsApp: Deleted user {phone_number}")
+            logger.info(f"🗑️  Admin WhatsApp: Deleted user {phone_number} from {collection_name}")
             
             return "✅ Your data has been deleted!\nSend any message to start fresh."
         
@@ -1003,7 +1044,8 @@ async def handle_admin_whatsapp_command(
                 "chat_history": []
             }
             
-            db.collection("users").document(phone_number).set(user_data)
+            collection_name = f"{collection_prefix}users"
+            db.collection(collection_name).document(phone_number).set(user_data)
             
             logger.info(f"🔄 Admin WhatsApp: Reset user {phone_number}")
             
@@ -1015,6 +1057,342 @@ async def handle_admin_whatsapp_command(
     except Exception as e:
         logger.error(f"❌ Error handling admin command: {str(e)}")
         return f"❌ Error: {str(e)}"
+
+
+# ============================================================================
+# SANDBOX / TESTING ENDPOINTS
+# ============================================================================
+
+class SandboxMessageRequest(BaseModel):
+    phone_number: str
+    message: str
+    environment: str = "test"  # "test" or "production"
+
+@router.post("/sandbox/send")
+async def send_sandbox_message(
+    request: SandboxMessageRequest,
+    _: bool = Depends(verify_admin_token)
+):
+    """
+    Send a message to the bot as if from a WhatsApp user (for testing)
+    
+    The message is processed through the normal flow but uses test collections
+    """
+    from database import get_db
+    from database.firestore_client import get_or_create_user_sandbox, add_message_to_history_sandbox
+    from services.ai_service import process_message_with_ai_sandbox
+    from config import get_welcome_message
+    
+    try:
+        db = get_db()
+        if not db:
+            raise HTTPException(status_code=503, detail="Database not available")
+        
+        collection_prefix = "test_" if request.environment == "test" else ""
+        
+        logger.info(f"🧪 Sandbox message from {request.phone_number} [{request.environment}]: {request.message}")
+        logger.info(f"   Step 1: Getting or creating user...")
+        
+        # Get or create test user
+        user_data, is_new_user = await get_or_create_user_sandbox(
+            request.phone_number, 
+            f"Test User {request.phone_number[-4:]}",
+            collection_prefix
+        )
+        logger.info(f"   Step 2: User loaded, is_new={is_new_user}")
+        
+        # If new user, send welcome
+        if is_new_user:
+            logger.info(f"   Step 3: New user, sending welcome...")
+            welcome_msg = get_welcome_message(user_data.get("name"))
+            await add_message_to_history_sandbox(
+                request.phone_number, 
+                "assistant", 
+                welcome_msg, 
+                collection_prefix
+            )
+            logger.info(f"   Step 4: Welcome sent, returning response")
+            return {
+                "status": "success",
+                "phone_number": request.phone_number,
+                "message": request.message,
+                "environment": request.environment,
+                "response": welcome_msg,
+                "is_new_user": True
+            }
+        
+        # Check for admin commands (same as production)
+        logger.info(f"   Step 3: Checking for admin commands...")
+        if request.message.startswith("/a"):
+            logger.info(f"   Step 4: Admin command detected")
+            admin_response = await handle_admin_whatsapp_command(
+                request.phone_number, 
+                request.message, 
+                db,
+                collection_prefix=collection_prefix  # Use test collections for admin commands too
+            )
+            
+            if admin_response:
+                logger.info(f"   Step 5: Admin command handled, saving to history...")
+                await add_message_to_history_sandbox(
+                    request.phone_number, 
+                    "user", 
+                    request.message, 
+                    collection_prefix
+                )
+                await add_message_to_history_sandbox(
+                    request.phone_number, 
+                    "assistant", 
+                    admin_response, 
+                    collection_prefix
+                )
+                logger.info(f"   Step 6: Admin response ready, returning")
+                return {
+                    "status": "success",
+                    "phone_number": request.phone_number,
+                    "message": request.message,
+                    "environment": request.environment,
+                    "response": admin_response,
+                    "is_new_user": False
+                }
+        
+        # Process with AI
+        logger.info(f"   Step 4: Calling AI service...")
+        logger.info(f"   User data keys: {list(user_data.keys())}")
+        logger.info(f"   Chat history length: {len(user_data.get('chat_history', []))}")
+        
+        response = await process_message_with_ai_sandbox(
+            request.phone_number, 
+            request.message, 
+            user_data,
+            collection_prefix
+        )
+        
+        response_preview = response[:200] if response and len(response) > 200 else response
+        logger.info(f"   Step 5: AI response received (length: {len(response) if response else 0})")
+        logger.info(f"   Response preview: {response_preview}{'...' if response and len(response) > 200 else ''}")
+        
+        logger.info(f"   Step 6: Preparing final response...")
+        result = {
+            "status": "success",
+            "phone_number": request.phone_number,
+            "message": request.message,
+            "environment": request.environment,
+            "response": response,
+            "is_new_user": False
+        }
+        logger.info(f"   Step 7: ✅ ENDPOINT COMPLETE - returning response to frontend")
+        return result
+    
+    except Exception as e:
+        logger.error(f"❌ EXCEPTION in sandbox endpoint: {type(e).__name__}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/sandbox/users")
+async def get_sandbox_users(
+    environment: str = "test",
+    _: bool = Depends(verify_admin_token)
+):
+    """Get test users for the sandbox"""
+    from database import get_db
+    
+    try:
+        db = get_db()
+        if not db:
+            raise HTTPException(status_code=503, detail="Database not available")
+        
+        collection_prefix = "test_" if environment == "test" else ""
+        collection_name = f"{collection_prefix}users"
+        
+        users = []
+        docs = db.collection(collection_name).limit(10).stream()
+        
+        for doc in docs:
+            user_data = doc.to_dict()
+            users.append({
+                "phone_number": user_data.get("phone_number"),
+                "name": user_data.get("name"),
+                "chat_history": user_data.get("chat_history", [])[-10:],  # Last 10 messages
+                "message_count": len(user_data.get("chat_history", []))
+            })
+        
+        return {
+            "environment": environment,
+            "users": users,
+            "count": len(users)
+        }
+    
+    except Exception as e:
+        logger.error(f"Error getting sandbox users: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/sandbox/all-rides")
+async def get_sandbox_all_rides(
+    environment: str = "test",
+    _: bool = Depends(verify_admin_token)
+):
+    """Get all rides and requests in sandbox for debugging"""
+    from database import get_db
+    
+    try:
+        db = get_db()
+        if not db:
+            raise HTTPException(status_code=503, detail="Database not available")
+        
+        collection_prefix = "test_" if environment == "test" else ""
+        collection_name = f"{collection_prefix}users"
+        
+        all_drivers = []
+        all_hitchhikers = []
+        
+        docs = db.collection(collection_name).stream()
+        
+        for doc in docs:
+            user_data = doc.to_dict()
+            phone = user_data.get("phone_number")
+            name = user_data.get("name")
+            
+            # Get driver rides
+            driver_rides = user_data.get("driver_data", {}).get("rides", [])
+            for ride in driver_rides:
+                all_drivers.append({
+                    "phone": phone,
+                    "name": name,
+                    "destination": ride.get("destination"),
+                    "origin": ride.get("origin"),
+                    "date": ride.get("travel_date"),
+                    "time": ride.get("departure_time"),
+                    "days": ride.get("days")
+                })
+            
+            # Get hitchhiker requests
+            hitchhiker_requests = user_data.get("hitchhiker_data", {}).get("requests", [])
+            for request in hitchhiker_requests:
+                all_hitchhikers.append({
+                    "phone": phone,
+                    "name": name,
+                    "destination": request.get("destination"),
+                    "origin": request.get("origin"),
+                    "date": request.get("travel_date"),
+                    "time": request.get("departure_time"),
+                    "flexibility": request.get("flexibility")
+                })
+        
+        return {
+            "environment": environment,
+            "drivers": all_drivers,
+            "hitchhikers": all_hitchhikers,
+            "driver_count": len(all_drivers),
+            "hitchhiker_count": len(all_hitchhikers)
+        }
+    
+    except Exception as e:
+        logger.error(f"Error getting sandbox rides: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/sandbox/reset")
+async def reset_sandbox(
+    environment: str = "test",
+    _: bool = Depends(verify_admin_token)
+):
+    """Reset all test data (delete test collections)"""
+    from database import get_db
+    
+    if environment == "production":
+        raise HTTPException(status_code=403, detail="Cannot reset production data via API")
+    
+    try:
+        db = get_db()
+        if not db:
+            raise HTTPException(status_code=503, detail="Database not available")
+        
+        # Delete all test collections
+        test_collections = ["test_users", "test_matches"]
+        deleted_count = 0
+        
+        for collection_name in test_collections:
+            docs = db.collection(collection_name).stream()
+            for doc in docs:
+                doc.reference.delete()
+                deleted_count += 1
+        
+        logger.info(f"🧹 Sandbox reset: deleted {deleted_count} documents")
+        
+        return {
+            "status": "success",
+            "deleted_documents": deleted_count,
+            "message": "Sandbox has been reset"
+        }
+    
+    except Exception as e:
+        logger.error(f"Error resetting sandbox: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/rides/calculate-routes")
+async def calculate_routes_for_rides(
+    _: bool = Depends(verify_admin_token)
+):
+    """
+    Manually trigger route calculation for all rides that don't have route data yet.
+    This is useful for existing rides created before route calculation was implemented.
+    """
+    from database import get_db
+    from services.route_service import calculate_and_save_route_background
+    
+    try:
+        db = get_db()
+        if not db:
+            raise HTTPException(status_code=503, detail="Database not available")
+        
+        # Get all users
+        users_ref = db.collection("users").stream()
+        
+        tasks_created = 0
+        rides_processed = 0
+        
+        for user_doc in users_ref:
+            user_data = user_doc.to_dict()
+            phone_number = user_data.get("phone_number")
+            
+            # Process driver rides
+            driver_rides = user_data.get("driver_rides", [])
+            for ride in driver_rides:
+                rides_processed += 1
+                
+                # Check if route data exists
+                if not ride.get("route_coordinates"):
+                    origin = ride.get("origin")
+                    destination = ride.get("destination")
+                    ride_id = ride.get("id")
+                    
+                    if origin and destination and ride_id:
+                        logger.info(f"🔄 Starting route calc for ride {ride_id}: {origin} → {destination}")
+                        
+                        # Start background calculation
+                        asyncio.create_task(calculate_and_save_route_background(
+                            phone_number,
+                            ride_id,
+                            origin,
+                            destination
+                        ))
+                        tasks_created += 1
+        
+        logger.info(f"✅ Created {tasks_created} route calculation tasks for {rides_processed} rides")
+        
+        return {
+            "status": "success",
+            "rides_processed": rides_processed,
+            "calculations_started": tasks_created,
+            "message": f"Route calculations started for {tasks_created} rides"
+        }
+    
+    except Exception as e:
+        logger.error(f"Error calculating routes: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ============================================================================
