@@ -225,11 +225,17 @@ function RidesPage() {
                   <td className="py-3 px-4">{ride.departure_time || '-'}</td>
                   <td className="py-3 px-4">
                     <span className={`px-2 py-1 rounded text-xs font-semibold ${
-                      ride.flexibility === 'flexible' 
-                        ? 'bg-green-100 text-green-700' 
-                        : 'bg-orange-100 text-orange-700'
+                      ride.flexibility === 'exact'
+                        ? 'bg-orange-100 text-orange-700'
+                        : ride.flexibility === 'flexible'
+                        ? 'bg-green-100 text-green-700'
+                        : 'bg-blue-100 text-blue-700'
                     }`}>
-                      {ride.flexibility === 'flexible' ? 'גמיש' : 'מדויק'}
+                      {ride.flexibility === 'exact' 
+                        ? 'מדויק' 
+                        : ride.flexibility === 'flexible' 
+                        ? 'גמיש' 
+                        : 'גמיש מאוד'}
                     </span>
                   </td>
                   <td className="py-3 px-4 text-sm text-gray-600 max-w-[200px] truncate">

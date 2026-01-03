@@ -391,7 +391,17 @@ function SandboxPage() {
                               <div className="font-semibold">{hitchhiker.name} ({hitchhiker.phone})</div>
                               <div className="text-sm">📍 {hitchhiker.origin || 'גברעם'} → {hitchhiker.destination}</div>
                               <div className="text-sm">🕐 {hitchhiker.date} בשעה {hitchhiker.time}</div>
-                              {hitchhiker.flexibility && <div className="text-sm">⏱️ גמישות: {hitchhiker.flexibility}</div>}
+                              {hitchhiker.flexibility && (
+                                <div className="text-sm">
+                                  ⏱️ גמישות: {
+                                    hitchhiker.flexibility === 'exact' 
+                                      ? 'מדויק' 
+                                      : hitchhiker.flexibility === 'flexible' 
+                                      ? 'גמיש' 
+                                      : 'גמיש מאוד'
+                                  }
+                                </div>
+                              )}
                             </div>
                           </div>
                         </div>

@@ -139,7 +139,7 @@ async def handle_update_user_records(phone_number: str, arguments: Dict, collect
     role = arguments.get("role")
     origin = arguments.get("origin", "גברעם")  # Default to גברעם
     destination = arguments.get("destination")
-    departure_time = arguments.get("departure_time", "08:00")
+    departure_time = arguments.get("departure_time")
     
     # Check for return trip
     return_trip = arguments.get("return_trip", False)
@@ -147,6 +147,9 @@ async def handle_update_user_records(phone_number: str, arguments: Dict, collect
     
     if not role or not destination:
         return {"status": "error", "message": "חסר מידע חיוני"}
+    
+    if not departure_time:
+        return {"status": "error", "message": "באיזו שעה? (למשל: בשעה 8, בבוקר, בערב)"}
     
     # Validate return trip
     if return_trip and not return_time:

@@ -425,7 +425,11 @@ function RideMapModal({ ride, matchingParams, onClose }) {
                     </p>
                     {ride.flexibility && (
                       <p className="text-xs text-gray-600 mt-2">
-                        גמישות: {ride.flexibility === 'flexible' ? 'גמיש' : 'מדויק'}
+                        גמישות: {ride.flexibility === 'exact' 
+                          ? 'מדויק' 
+                          : ride.flexibility === 'flexible' 
+                          ? 'גמיש' 
+                          : 'גמיש מאוד'}
                       </p>
                     )}
                   </div>
