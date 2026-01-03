@@ -1,17 +1,32 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { usersAPI } from '../api/client';
+import UserDetailsModal from '../components/Users/UserDetailsModal';
 
 function UsersPage() {
   const [search, setSearch] = useState('');
   const [sortBy, setSortBy] = useState('last_seen');
   const [order, setOrder] = useState('desc');
+  const [selectedUser, setSelectedUser] = useState(null);
+  const queryClient = useQueryClient();
   
   // Fetch users
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['users', { search, sortBy, order }],
     queryFn: () => usersAPI.list({ search, sort_by: sortBy, order, limit: 100 }).then(res => res.data),
     refetchInterval: 30000,
+  });
+
+  // Delete user mutation
+  const deleteMutation = useMutation({
+    mutationFn: (phoneNumber) => usersAPI.delete(phoneNumber),
+    onSuccess: () => {
+      queryClient.invalidateQueries(['users']);
+      alert('המשתמש נמחק בהצלחה');
+    },
+    onError: () => {
+      alert('שגיאה במחיקת המשתמש');
+    },
   });
 
   const handleExport = async () => {
@@ -26,6 +41,12 @@ function UsersPage() {
       link.remove();
     } catch (error) {
       alert('שגיאה בייצוא הנתונים');
+    }
+  };
+
+  const handleDeleteUser = (phoneNumber, userName) => {
+    if (window.confirm(`האם אתה בטוח שברצונך למחוק את ${userName || phoneNumber}?`)) {
+      deleteMutation.mutate(phoneNumber);
     }
   };
 
@@ -102,11 +123,16 @@ function UsersPage() {
                 <th className="text-right py-3 px-4 font-semibold text-gray-700">הודעות</th>
                 <th className="text-right py-3 px-4 font-semibold text-gray-700">נראה לאחרונה</th>
                 <th className="text-right py-3 px-4 font-semibold text-gray-700">הצטרף</th>
+                <th className="text-right py-3 px-4 font-semibold text-gray-700">פעולות</th>
               </tr>
             </thead>
             <tbody>
               {users.map((user) => (
-                <tr key={user.phone_number} className="border-t hover:bg-gray-50">
+                <tr 
+                  key={user.phone_number} 
+                  className="border-t hover:bg-gray-50 cursor-pointer"
+                  onClick={() => setSelectedUser(user)}
+                >
                   <td className="py-3 px-4 font-mono text-sm">{user.phone_number}</td>
                   <td className="py-3 px-4 font-medium">{user.name || '-'}</td>
                   <td className="py-3 px-4">
@@ -130,6 +156,15 @@ function UsersPage() {
                   <td className="py-3 px-4 text-sm text-gray-600">
                     {user.created_at ? new Date(user.created_at).toLocaleDateString('he-IL') : '-'}
                   </td>
+                  <td className="py-3 px-4" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      onClick={() => handleDeleteUser(user.phone_number, user.name)}
+                      className="text-red-600 hover:text-red-800 hover:bg-red-50 p-2 rounded transition-colors"
+                      title="מחק משתמש"
+                    >
+                      🗑️
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -142,6 +177,14 @@ function UsersPage() {
           )}
         </div>
       </div>
+
+      {/* User Details Modal */}
+      {selectedUser && (
+        <UserDetailsModal
+          user={selectedUser}
+          onClose={() => setSelectedUser(null)}
+        />
+      )}
     </div>
   );
 }

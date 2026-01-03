@@ -18,7 +18,8 @@ GOOGLE_CLOUD_PROJECT = os.getenv("GOOGLE_CLOUD_PROJECT")
 
 # App settings
 PORT = int(os.getenv("PORT", 8080))
-MAX_CHAT_HISTORY = 20
+MAX_CHAT_HISTORY = 100  # Store last 100 messages in database (for admin view)
+AI_CONTEXT_MESSAGES = 10  # Send only last 10 messages to AI (to save costs and keep context short)
 DEFAULT_NOTIFICATION_LEVEL = "all"
 
 # Route Matching - Dynamic Threshold Configuration
