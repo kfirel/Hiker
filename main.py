@@ -101,11 +101,11 @@ frontend_dist = os.path.join(os.path.dirname(__file__), "frontend", "dist")
 frontend_index = os.path.join(frontend_dist, "index.html")
 
 if os.path.exists(frontend_dist):
-    # Mount assets directory
+    # Mount assets directory at /admin/assets (to match base: '/admin/' in vite.config)
     assets_dir = os.path.join(frontend_dist, "assets")
     if os.path.exists(assets_dir):
-        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
-        logger.info("✅ Admin dashboard assets available at /assets")
+        app.mount("/admin/assets", StaticFiles(directory=assets_dir), name="assets")
+        logger.info("✅ Admin dashboard assets available at /admin/assets")
     
     logger.info("✅ Admin dashboard available at /admin")
 else:
@@ -253,6 +253,14 @@ async def get_user_details(phone_number: str):
         return {"error": str(e)}
 
 
+# Special route for /admin root
+@app.get("/admin")
+async def serve_admin_root():
+    """Serve index.html for /admin root"""
+    if os.path.exists(frontend_index):
+        return FileResponse(frontend_index)
+    raise HTTPException(status_code=404, detail="Admin dashboard not found")
+
 # Catch-all route for React Router (SPA)
 # This must be AFTER all API routes
 @app.get("/admin/{full_path:path}")
@@ -270,6 +278,7 @@ async def serve_spa(full_path: str):
         if os.path.exists(file_path) and os.path.isfile(file_path):
             return FileResponse(file_path)
         else:
+            # File not found in /admin/, maybe it's an old reference
             raise HTTPException(status_code=404, detail=f"File not found: {full_path}")
     
     # Otherwise, return index.html for React Router to handle
