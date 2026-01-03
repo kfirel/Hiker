@@ -2,7 +2,7 @@
 import logging
 from google import genai
 from google.genai import types
-from config import GEMINI_API_KEY
+from config import GEMINI_API_KEY, AI_CONTEXT_MESSAGES
 
 logger = logging.getLogger(__name__)
 
@@ -485,8 +485,8 @@ async def process_message_with_ai(phone_number: str, message_text: str, user_dat
     now = get_israel_now()
     current_context = f"\n\n[מידע נוכחי: תאריך היום: {now.strftime('%Y-%m-%d')}, שעה: {now.strftime('%H:%M')}, יום: {now.strftime('%A')}]"
     
-    # Build chat history
-    history = user_data.get("chat_history", [])[-10:]  # Last 10 messages
+    # Build chat history - send only last N messages to AI (to save costs)
+    history = user_data.get("chat_history", [])[-AI_CONTEXT_MESSAGES:]  # Last 10 messages for AI
     messages = [{"role": msg["role"], "parts": [{"text": msg["content"]}]} for msg in history]
     messages.append({"role": "user", "parts": [{"text": message_text + current_context}]})
     
