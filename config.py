@@ -23,7 +23,7 @@ AI_CONTEXT_MESSAGES = 5  # Send only last 5 messages to AI (to save costs and re
 DEFAULT_NOTIFICATION_LEVEL = "all"
 
 # Route Matching - Dynamic Threshold Configuration
-ROUTE_PROXIMITY_MIN_THRESHOLD_KM = 0.5  # Minimum threshold for short routes
+ROUTE_PROXIMITY_MIN_THRESHOLD_KM = 1  # Minimum threshold for short routes
 ROUTE_PROXIMITY_MAX_THRESHOLD_KM = 10.0  # Maximum threshold for long routes
 ROUTE_PROXIMITY_SCALE_FACTOR = 4.0  # Every X km of route adds 1 km to threshold
 

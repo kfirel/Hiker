@@ -111,6 +111,10 @@ function RideMapModal({ ride, matchingParams, onClose }) {
   const maxThreshold = matchingParams?.max_threshold_km || 10.0;
   const scaleFactor = matchingParams?.scale_factor || 5.0;
 
+  // Determine ride type (must be outside useEffect to use in JSX)
+  const hasRouteData = ride.route_coordinates && ride.route_coordinates.length > 0;
+  const isHitchhiker = !hasRouteData && ride.origin && ride.destination;
+
   // Debug: Log ride data
   useEffect(() => {
     console.log('🗺️ RideMapModal - ride data:', ride);
@@ -130,27 +134,44 @@ function RideMapModal({ ride, matchingParams, onClose }) {
   useEffect(() => {
     if (!mapRef.current || mapInstanceRef.current) return;
     
-    const hasRouteData = ride.route_coordinates && ride.route_coordinates.length > 0;
-    console.log('🔍 hasRouteData:', hasRouteData, 'length:', ride.route_coordinates?.length);
-    if (!hasRouteData) {
+    console.log('🔍 Map type:', hasRouteData ? 'Driver (route)' : isHitchhiker ? 'Hitchhiker (points)' : 'Error');
+    console.log('🔍 hasRouteData:', hasRouteData, 'isHitchhiker:', isHitchhiker);
+    
+    if (!hasRouteData && !isHitchhiker) {
       setMapError(true);
       return;
     }
 
     try {
-      // Parse coordinates (they come as flat array: [lat1, lon1, lat2, lon2, ...])
-      const coords = [];
-      for (let i = 0; i < ride.route_coordinates.length; i += 2) {
-        const lat = ride.route_coordinates[i];
-        const lon = ride.route_coordinates[i + 1];
-        if (lat && lon) {
-          coords.push([lat, lon]);
+      let coords = [];
+      
+      // Parse coordinates based on ride type
+      if (hasRouteData) {
+        // Driver: Parse route coordinates (flat array: [lat1, lon1, lat2, lon2, ...])
+        for (let i = 0; i < ride.route_coordinates.length; i += 2) {
+          const lat = ride.route_coordinates[i];
+          const lon = ride.route_coordinates[i + 1];
+          if (lat && lon) {
+            coords.push([lat, lon]);
+          }
         }
-      }
 
-      if (coords.length === 0) {
-        setMapError(true);
-        return;
+        if (coords.length === 0) {
+          setMapError(true);
+          return;
+        }
+      } else if (isHitchhiker) {
+        // Hitchhiker: Use origin and destination coordinates
+        if (ride.origin_coordinates && ride.destination_coordinates) {
+          coords.push([ride.origin_coordinates[0], ride.origin_coordinates[1]]);
+          coords.push([ride.destination_coordinates[0], ride.destination_coordinates[1]]);
+          console.log('✅ Hitchhiker with coordinates:', coords);
+        } else {
+          // No coordinates - show map error (will display Google Maps link instead)
+          console.warn('⚠️ Hitchhiker missing coordinates - showing Google Maps link:', ride);
+          setMapError(true);
+          return;
+        }
       }
 
       // Create map
@@ -166,18 +187,31 @@ function RideMapModal({ ride, matchingParams, onClose }) {
       }).addTo(map);
 
       // Add route line
-      const routeLine = L.polyline(coords, {
-        color: '#3B82F6',
-        weight: 4,
-        opacity: 0.8,
-      }).addTo(map);
+      if (hasRouteData) {
+        // Driver: Show full route
+        const routeLine = L.polyline(coords, {
+          color: '#3B82F6',
+          weight: 4,
+          opacity: 0.8,
+        }).addTo(map);
+      } else if (isHitchhiker) {
+        // Hitchhiker: Show simple straight line (dashed)
+        const routeLine = L.polyline(coords, {
+          color: '#10B981', // Green for hitchhiker
+          weight: 3,
+          opacity: 0.6,
+          dashArray: '10, 10', // Dashed line
+        }).addTo(map);
+      }
 
       // Add start marker
+      const startEmoji = isHitchhiker ? '🎒' : '🚗';
+      const startColor = isHitchhiker ? '#10B981' : '#22C55E';
       const startIcon = L.divIcon({
         className: 'custom-div-icon',
-        html: "<div style='background-color:#22C55E;width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:white;font-weight:bold;border:3px solid white;box-shadow:0 2px 8px rgba(0,0,0,0.3);'>🚗</div>",
-        iconSize: [30, 30],
-        iconAnchor: [15, 15],
+        html: `<div style='background-color:${startColor};width:35px;height:35px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:white;font-weight:bold;border:3px solid white;box-shadow:0 2px 8px rgba(0,0,0,0.3);'>${startEmoji}</div>`,
+        iconSize: [35, 35],
+        iconAnchor: [17.5, 17.5],
       });
       L.marker(coords[0], { icon: startIcon })
         .bindPopup(`<b>נקודת התחלה</b><br>${ride.origin || 'לא ידוע'}`)
@@ -186,65 +220,64 @@ function RideMapModal({ ride, matchingParams, onClose }) {
       // Add end marker
       const endIcon = L.divIcon({
         className: 'custom-div-icon',
-        html: "<div style='background-color:#EF4444;width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:white;font-weight:bold;border:3px solid white;box-shadow:0 2px 8px rgba(0,0,0,0.3);'>📍</div>",
-        iconSize: [30, 30],
-        iconAnchor: [15, 15],
+        html: "<div style='background-color:#EF4444;width:35px;height:35px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:white;font-weight:bold;border:3px solid white;box-shadow:0 2px 8px rgba(0,0,0,0.3);'>📍</div>",
+        iconSize: [35, 35],
+        iconAnchor: [17.5, 17.5],
       });
       L.marker(coords[coords.length - 1], { icon: endIcon })
         .bindPopup(`<b>יעד</b><br>${ride.destination || 'לא ידוע'}`)
         .addTo(map);
 
-      // Add dynamic matching zone as circles along route
-      // Calculate accumulated distance for each point
-      const distances = [0];
-      for (let i = 1; i < coords.length; i++) {
-        const dist = distances[i-1] + calculateDistance(
-          coords[i-1][0], coords[i-1][1],
-          coords[i][0], coords[i][1]
-        );
-        distances.push(dist);
-      }
-      
-      // Draw circles at regular intervals
-      const stepKm = 0.5; // Draw circle every 0.5 km
-      const drawnCircles = [];
-      
-      for (let targetDist = 0; targetDist <= distances[distances.length - 1]; targetDist += stepKm) {
-        // Find the segment containing this distance
-        let segmentIdx = 0;
-        for (let i = 1; i < distances.length; i++) {
-          if (distances[i] >= targetDist) {
-            segmentIdx = i;
-            break;
-          }
+      // Add dynamic matching zone (only for drivers)
+      if (hasRouteData) {
+        // Calculate accumulated distance for each point
+        const distances = [0];
+        for (let i = 1; i < coords.length; i++) {
+          const dist = distances[i-1] + calculateDistance(
+            coords[i-1][0], coords[i-1][1],
+            coords[i][0], coords[i][1]
+          );
+          distances.push(dist);
         }
         
-        if (segmentIdx === 0) segmentIdx = 1;
+        // Draw circles at regular intervals
+        const stepKm = 0.5; // Draw circle every 0.5 km
         
-        // Interpolate position
-        const segStart = distances[segmentIdx - 1];
-        const segEnd = distances[segmentIdx];
-        const ratio = (targetDist - segStart) / (segEnd - segStart);
+        for (let targetDist = 0; targetDist <= distances[distances.length - 1]; targetDist += stepKm) {
+          // Find the segment containing this distance
+          let segmentIdx = 0;
+          for (let i = 1; i < distances.length; i++) {
+            if (distances[i] >= targetDist) {
+              segmentIdx = i;
+              break;
+            }
+          }
+          
+          if (segmentIdx === 0) segmentIdx = 1;
+          
+          // Interpolate position
+          const segStart = distances[segmentIdx - 1];
+          const segEnd = distances[segmentIdx];
+          const ratio = (targetDist - segStart) / (segEnd - segStart);
+          
+          const lat = coords[segmentIdx - 1][0] + ratio * (coords[segmentIdx][0] - coords[segmentIdx - 1][0]);
+          const lon = coords[segmentIdx - 1][1] + ratio * (coords[segmentIdx][1] - coords[segmentIdx - 1][1]);
+          
+          // Calculate dynamic threshold at this distance
+          const thresholdKm = calculateDynamicThreshold(targetDist, minThreshold, maxThreshold, scaleFactor);
+          
+          // Draw circle
+          L.circle([lat, lon], {
+            radius: thresholdKm * 1000, // Convert to meters
+            color: '#34D399',
+            fillColor: '#34D399',
+            fillOpacity: 0.04,  // Very transparent
+            weight: 0,
+            opacity: 0,
+          }).addTo(map);
+        }
         
-        const lat = coords[segmentIdx - 1][0] + ratio * (coords[segmentIdx][0] - coords[segmentIdx - 1][0]);
-        const lon = coords[segmentIdx - 1][1] + ratio * (coords[segmentIdx][1] - coords[segmentIdx - 1][1]);
-        
-        // Calculate dynamic threshold at this distance
-        const thresholdKm = calculateDynamicThreshold(targetDist, minThreshold, maxThreshold, scaleFactor);
-        
-        // Draw circle
-        L.circle([lat, lon], {
-          radius: thresholdKm * 1000, // Convert to meters
-          color: '#34D399',
-          fillColor: '#34D399',
-          fillOpacity: 0.04,  // Very transparent
-          weight: 0,
-          opacity: 0,
-        }).addTo(map);
-      }
-      
-      if (true) {
-        // Add legend
+        // Add legend (only for drivers)
         const legend = L.control({ position: 'bottomright' });
         legend.onAdd = function() {
           const div = L.DomUtil.create('div', 'info legend');
@@ -267,8 +300,9 @@ function RideMapModal({ ride, matchingParams, onClose }) {
         legend.addTo(map);
       }
 
-      // Fit bounds to show entire route
-      map.fitBounds(routeLine.getBounds(), { padding: [50, 50] });
+      // Fit bounds to show entire route/points
+      const bounds = L.latLngBounds(coords);
+      map.fitBounds(bounds, { padding: [50, 50] });
 
     } catch (error) {
       console.error('Error creating map:', error);
@@ -282,9 +316,9 @@ function RideMapModal({ ride, matchingParams, onClose }) {
         mapInstanceRef.current = null;
       }
     };
-  }, [ride]);
+  }, [ride, hasRouteData, isHitchhiker, minThreshold, maxThreshold, scaleFactor]);
 
-  const hasRouteData = ride.route_coordinates && ride.route_coordinates.length > 0;
+  // Google Maps URL
   const mapUrl = hasRouteData 
     ? `https://www.google.com/maps/dir/${ride.origin}/${ride.destination}`
     : `https://www.google.com/maps/search/${ride.destination}`;
@@ -351,7 +385,7 @@ function RideMapModal({ ride, matchingParams, onClose }) {
 
         {/* Map */}
         <div className="p-6">
-          {hasRouteData && !mapError ? (
+          {(hasRouteData || isHitchhiker) && !mapError ? (
             <div>
               {/* Map Container */}
               <div 
@@ -360,42 +394,60 @@ function RideMapModal({ ride, matchingParams, onClose }) {
                 style={{ minHeight: '500px' }}
               />
               
-              {/* Map Info */}
-              <div className="mt-4 grid grid-cols-3 gap-4 text-center">
-                <div className="bg-blue-50 p-3 rounded-lg">
-                  <p className="text-xs text-gray-600 mb-1">נקודות במסלול</p>
-                  <p className="text-lg font-bold text-blue-700">
-                    {Math.floor(ride.route_coordinates?.length / 2) || 0}
-                  </p>
+              {/* Map Info - Different for Driver vs Hitchhiker */}
+              {hasRouteData ? (
+                <div className="mt-4 grid grid-cols-3 gap-4 text-center">
+                  <div className="bg-blue-50 p-3 rounded-lg">
+                    <p className="text-xs text-gray-600 mb-1">נקודות במסלול</p>
+                    <p className="text-lg font-bold text-blue-700">
+                      {Math.floor(ride.route_coordinates?.length / 2) || 0}
+                    </p>
+                  </div>
+                  <div className="bg-green-50 p-3 rounded-lg">
+                    <p className="text-xs text-gray-600 mb-1">מרחק כולל</p>
+                    <p className="text-lg font-bold text-green-700">
+                      {ride.route_distance_km?.toFixed(1) || 0} ק"מ
+                    </p>
+                  </div>
+                  <div className="bg-purple-50 p-3 rounded-lg">
+                    <p className="text-xs text-gray-600 mb-1">אזור התאמה</p>
+                    <p className="text-lg font-bold text-purple-700">
+                      ±{ride.route_threshold_km?.toFixed(1) || 0} ק"מ
+                    </p>
+                  </div>
                 </div>
-                <div className="bg-green-50 p-3 rounded-lg">
-                  <p className="text-xs text-gray-600 mb-1">מרחק כולל</p>
-                  <p className="text-lg font-bold text-green-700">
-                    {ride.route_distance_km?.toFixed(1) || 0} ק"מ
-                  </p>
+              ) : isHitchhiker ? (
+                <div className="mt-4 flex justify-center">
+                  <div className="bg-green-50 p-4 rounded-lg text-center">
+                    <p className="text-sm text-gray-600 mb-2">🎒 בקשת טרמפ</p>
+                    <p className="text-lg font-bold text-green-700">
+                      מ-{ride.origin} ל-{ride.destination}
+                    </p>
+                    {ride.flexibility && (
+                      <p className="text-xs text-gray-600 mt-2">
+                        גמישות: {ride.flexibility === 'flexible' ? 'גמיש' : 'מדויק'}
+                      </p>
+                    )}
+                  </div>
                 </div>
-                <div className="bg-purple-50 p-3 rounded-lg">
-                  <p className="text-xs text-gray-600 mb-1">אזור התאמה</p>
-                  <p className="text-lg font-bold text-purple-700">
-                    ±{ride.route_threshold_km?.toFixed(1) || 0} ק"מ
-                  </p>
-                </div>
-              </div>
+              ) : null}
 
-              {/* Legend */}
+              {/* Legend - Different for Driver vs Hitchhiker */}
               <div className="mt-4 flex items-center justify-center gap-6 text-sm flex-wrap">
                 <div className="flex items-center gap-2">
-                  <div className="w-4 h-4 bg-green-500 rounded-full border-2 border-white shadow"></div>
-                  <span>נקודת התחלה (🚗)</span>
+                  <div className={`w-4 h-4 rounded-full border-2 border-white shadow ${isHitchhiker ? 'bg-green-500' : 'bg-green-500'}`}></div>
+                  <span>נקודת התחלה ({isHitchhiker ? '🎒' : '🚗'})</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <div className="w-4 h-4 bg-blue-500 rounded"></div>
-                  <span>מסלול הנסיעה</span>
+                  <div className={`w-4 h-4 ${isHitchhiker ? 'bg-green-500 border-2 border-dashed' : 'bg-blue-500'}`} style={isHitchhiker ? {borderColor: '#10B981'} : {}}></div>
+                  <span>{isHitchhiker ? 'כיוון נסיעה' : 'מסלול הנסיעה'}</span>
                 </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-4 h-4 bg-green-500 opacity-30 rounded"></div>
-                  <span>אזור פיקאפ 🎯</span>
-                </div>
+                {hasRouteData && (
+                  <div className="flex items-center gap-2">
+                    <div className="w-4 h-4 bg-green-500 opacity-30 rounded"></div>
+                    <span>אזור פיקאפ 🎯</span>
+                  </div>
+                )}
                 <div className="flex items-center gap-2">
                   <div className="w-4 h-4 bg-red-500 rounded-full border-2 border-white shadow"></div>
                   <span>יעד (📍)</span>
@@ -422,7 +474,9 @@ function RideMapModal({ ride, matchingParams, onClose }) {
               </h3>
               <p className="text-gray-600 mb-4">
                 {mapError 
-                  ? 'לא ניתן להציג את המפה - הקואורדינטות אינן תקינות'
+                  ? (!hasRouteData && isHitchhiker 
+                      ? '🎒 בקשת טרמפ זו נוצרה לפני עדכון המערכת. יש להסיר ולהוסיף מחדש כדי לראות מפה.'
+                      : 'לא ניתן להציג את המפה - הקואורדינטות אינן תקינות')
                   : 'הנסיעה טרם נותחה - אפשר לפתוח ב-Google Maps'
                 }
               </p>

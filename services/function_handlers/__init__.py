@@ -201,6 +201,21 @@ async def handle_update_user_records(phone_number: str, arguments: Dict, collect
                 "departure_time": departure_time_val,
                 "flexibility": arguments.get("flexibility", "very_flexible")  # Default: very flexible (±6h)
             })
+            
+            # 🗺️ Geocode origin and destination for map display
+            try:
+                from services.route_service import geocode_address
+                origin_coords = geocode_address(origin_val)
+                dest_coords = geocode_address(destination_val)
+                
+                if origin_coords and dest_coords:
+                    record["origin_coordinates"] = origin_coords
+                    record["destination_coordinates"] = dest_coords
+                    logger.info(f"📍 Geocoded hitchhiker locations: {origin_val} → {dest_val}")
+                else:
+                    logger.warning(f"⚠️ Could not geocode hitchhiker locations")
+            except Exception as e:
+                logger.error(f"❌ Error geocoding hitchhiker locations: {e}")
         
         return record
     

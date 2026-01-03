@@ -29,6 +29,11 @@ ADMIN_PHONE_NUMBERS = [num.strip() for num in ADMIN_PHONE_NUMBERS if num.strip()
 # Dependency for API token authentication
 async def verify_admin_token(x_admin_token: str = Header(None)) -> bool:
     """Verify admin token from request header"""
+    # In testing mode, bypass authentication for easier local development
+    if TESTING_MODE_ENABLED:
+        logger.debug("🔓 Testing mode: Bypassing admin token verification")
+        return True
+    
     if not ADMIN_TOKEN:
         raise HTTPException(
             status_code=503,
@@ -783,7 +788,10 @@ async def get_active_rides(
                         "created_at": request.get("created_at"),
                         "route_coordinates": route_coords,
                         "route_distance_km": request.get("route_distance_km"),
-                        "route_threshold_km": request.get("route_threshold_km")
+                        "route_threshold_km": request.get("route_threshold_km"),
+                        # Add origin/destination coordinates for map display
+                        "origin_coordinates": request.get("origin_coordinates"),
+                        "destination_coordinates": request.get("destination_coordinates")
                     })
         
         # Import matching algorithm parameters
@@ -1057,6 +1065,90 @@ async def handle_admin_whatsapp_command(
     except Exception as e:
         logger.error(f"❌ Error handling admin command: {str(e)}")
         return f"❌ Error: {str(e)}"
+
+
+# ============================================================================
+# UTILITY ENDPOINTS
+# ============================================================================
+
+@router.post("/utils/update-hitchhiker-coordinates")
+async def update_hitchhiker_coordinates(
+    collection_prefix: str = "",
+    _: bool = Depends(verify_admin_token)
+):
+    """
+    Update all hitchhiker requests with origin/destination coordinates
+    Useful for adding map support to old hitchhiker requests
+    """
+    from database import get_db
+    from services.route_service import geocode_address
+    
+    db = get_db()
+    if not db:
+        raise HTTPException(status_code=503, detail="Database not available")
+    
+    try:
+        collection_name = f"{collection_prefix}users"
+        users_docs = db.collection(collection_name).stream()
+        
+        updated_count = 0
+        skipped_count = 0
+        error_count = 0
+        
+        for doc in users_docs:
+            user_data = doc.to_dict()
+            phone = user_data.get("phone_number")
+            
+            hitchhiker_requests = user_data.get("hitchhiker_requests", [])
+            if not hitchhiker_requests:
+                continue
+            
+            updated = False
+            
+            for request in hitchhiker_requests:
+                # Skip if already has coordinates
+                if request.get("origin_coordinates") and request.get("destination_coordinates"):
+                    skipped_count += 1
+                    continue
+                
+                origin = request.get("origin", "גברעם")
+                destination = request.get("destination")
+                
+                if not destination:
+                    error_count += 1
+                    continue
+                
+                # Geocode
+                try:
+                    origin_coords = geocode_address(origin)
+                    dest_coords = geocode_address(destination)
+                    
+                    if origin_coords and dest_coords:
+                        request["origin_coordinates"] = list(origin_coords)
+                        request["destination_coordinates"] = list(dest_coords)
+                        updated = True
+                        updated_count += 1
+                    else:
+                        error_count += 1
+                except Exception as e:
+                    logger.error(f"Error geocoding for {phone}: {e}")
+                    error_count += 1
+            
+            # Save if updated
+            if updated:
+                doc.reference.update({"hitchhiker_requests": hitchhiker_requests})
+        
+        return {
+            "success": True,
+            "updated": updated_count,
+            "skipped": skipped_count,
+            "errors": error_count,
+            "collection": collection_name
+        }
+    
+    except Exception as e:
+        logger.error(f"Error updating coordinates: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ============================================================================
