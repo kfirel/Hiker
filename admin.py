@@ -1071,6 +1071,70 @@ async def handle_admin_whatsapp_command(
 # UTILITY ENDPOINTS
 # ============================================================================
 
+@router.post("/utils/trigger-match")
+async def trigger_match_for_ride(
+    phone_number: str,
+    ride_id: str,
+    ride_type: str,  # 'driver' or 'hitchhiker'
+    collection_prefix: str = "",
+    _: bool = Depends(verify_admin_token)
+):
+    """
+    Manually trigger matching for a specific ride
+    Useful for rides created through admin panel
+    
+    Example:
+        POST /admin/utils/trigger-match?phone_number=972524297932&ride_id=abc123&ride_type=hitchhiker
+    """
+    from database import get_db
+    from services.matching_service import find_matches_for_new_record
+    
+    db = get_db()
+    if not db:
+        raise HTTPException(status_code=503, detail="Database not available")
+    
+    try:
+        # Get user data
+        collection_name = f"{collection_prefix}users" if collection_prefix else "users"
+        doc = db.collection(collection_name).document(phone_number).get()
+        
+        if not doc.exists:
+            raise HTTPException(status_code=404, detail=f"User {phone_number} not found")
+        
+        user_data = doc.to_dict()
+        
+        # Find the specific ride
+        rides_list = user_data.get("driver_rides" if ride_type == "driver" else "hitchhiker_requests", [])
+        ride = None
+        for r in rides_list:
+            if r.get("id") == ride_id:
+                ride = r.copy()
+                ride["phone_number"] = phone_number
+                ride["name"] = user_data.get("name", "Unknown")
+                break
+        
+        if not ride:
+            raise HTTPException(status_code=404, detail=f"Ride {ride_id} not found")
+        
+        # Run matching
+        logger.info(f"🔍 Admin: Triggering match for {ride_type} {ride_id} ({phone_number})")
+        matches = await find_matches_for_new_record(ride_type, ride, collection_prefix)
+        
+        logger.info(f"✅ Admin: Found {len(matches)} matches")
+        
+        return {
+            "success": True,
+            "matches_found": len(matches),
+            "matches": matches
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error triggering match: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/utils/update-hitchhiker-coordinates")
 async def update_hitchhiker_coordinates(
     collection_prefix: str = "",
