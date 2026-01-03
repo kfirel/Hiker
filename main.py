@@ -5,7 +5,7 @@ Hitchhiking bot for Gvar'am community with AI-powered matching
 
 import logging
 from fastapi import FastAPI, Request, Response, HTTPException, Depends
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
@@ -98,14 +98,15 @@ app.include_router(admin.router)
 
 # Serve React admin dashboard (if built)
 frontend_dist = os.path.join(os.path.dirname(__file__), "frontend", "dist")
+frontend_index = os.path.join(frontend_dist, "index.html")
+
 if os.path.exists(frontend_dist):
-    # Mount assets first (higher priority)
+    # Mount assets directory
     assets_dir = os.path.join(frontend_dist, "assets")
     if os.path.exists(assets_dir):
         app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+        logger.info("✅ Admin dashboard assets available at /assets")
     
-    # Then mount the main app
-    app.mount("/admin", StaticFiles(directory=frontend_dist, html=True), name="admin")
     logger.info("✅ Admin dashboard available at /admin")
 else:
     logger.warning("⚠️  Admin dashboard not built - run 'cd frontend && npm run build'")
@@ -250,6 +251,32 @@ async def get_user_details(phone_number: str):
     except Exception as e:
         logger.error(f"Error getting user: {str(e)}")
         return {"error": str(e)}
+
+
+# Catch-all route for React Router (SPA)
+# This must be AFTER all API routes
+@app.get("/admin/{full_path:path}")
+async def serve_spa(full_path: str):
+    """
+    Serve React SPA for all /admin/* routes.
+    This handles React Router navigation (e.g., /admin/rides, /admin/users)
+    """
+    if not os.path.exists(frontend_dist):
+        raise HTTPException(status_code=404, detail="Admin dashboard not built")
+    
+    # Check if it's a request for a specific file (has extension)
+    if "." in full_path.split("/")[-1]:
+        file_path = os.path.join(frontend_dist, full_path)
+        if os.path.exists(file_path) and os.path.isfile(file_path):
+            return FileResponse(file_path)
+        else:
+            raise HTTPException(status_code=404, detail=f"File not found: {full_path}")
+    
+    # Otherwise, return index.html for React Router to handle
+    if os.path.exists(frontend_index):
+        return FileResponse(frontend_index)
+    else:
+        raise HTTPException(status_code=404, detail="index.html not found")
 
 
 if __name__ == "__main__":

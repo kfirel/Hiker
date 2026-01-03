@@ -4,6 +4,7 @@ import { BrowserRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import App from './App'
 import './styles/main.css'
+import 'leaflet/dist/leaflet.css'
 
 // Create a query client
 const queryClient = new QueryClient({

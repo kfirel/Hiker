@@ -727,7 +727,10 @@ async def get_active_rides(
                         "departure_time": ride.get("departure_time"),
                         "return_time": ride.get("return_time"),
                         "notes": ride.get("notes", ""),
-                        "created_at": ride.get("created_at")
+                        "created_at": ride.get("created_at"),
+                        "route_coordinates": ride.get("route_coordinates"),
+                        "route_distance_km": ride.get("route_distance_km"),
+                        "route_threshold_km": ride.get("route_threshold_km")
                     })
             
             # Get hitchhiker requests
@@ -751,7 +754,10 @@ async def get_active_rides(
                         "departure_time": request.get("departure_time"),
                         "flexibility": request.get("flexibility", "flexible"),
                         "notes": request.get("notes", ""),
-                        "created_at": request.get("created_at")
+                        "created_at": request.get("created_at"),
+                        "route_coordinates": request.get("route_coordinates"),
+                        "route_distance_km": request.get("route_distance_km"),
+                        "route_threshold_km": request.get("route_threshold_km")
                     })
         
         return {
