@@ -8,6 +8,7 @@ from fastapi import FastAPI, Request, Response, HTTPException, Depends
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.responses import Response as StarletteResponse
 import uvicorn
 import os
 
@@ -96,36 +97,36 @@ app.add_middleware(LoggingMiddleware)
 # Include admin router
 app.include_router(admin.router)
 
-# Serve React admin dashboard (if built)
-frontend_dist = os.path.join(os.path.dirname(__file__), "frontend", "dist")
-frontend_index = os.path.join(frontend_dist, "index.html")
-
-# Custom middleware to add cache-busting headers
-@app.middleware("http")
-async def add_cache_headers(request: Request, call_next):
-    response = await call_next(request)
+# Custom StaticFiles class with cache-busting headers
+class CacheBustedStaticFiles(StaticFiles):
+    """StaticFiles with proper cache control headers"""
     
-    # For admin static files
-    if request.url.path.startswith("/admin"):
-        # index.html - always revalidate
-        if request.url.path.endswith(".html") or request.url.path == "/admin" or request.url.path == "/admin/":
+    async def get_response(self, path: str, scope):
+        response = await super().get_response(path, scope)
+        
+        # index.html and root - never cache
+        if path.endswith(".html") or path == "" or path == "/":
             response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
             response.headers["Pragma"] = "no-cache"
             response.headers["Expires"] = "0"
         # JS/CSS assets with hash - cache forever
-        elif "/assets/" in request.url.path and (request.url.path.endswith(".js") or request.url.path.endswith(".css")):
+        elif "/assets/" in path and (path.endswith(".js") or path.endswith(".css")):
             response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
-        # Other static files - moderate caching
+        # Other files - short cache
         else:
             response.headers["Cache-Control"] = "public, max-age=3600"
-    
-    return response
+        
+        return response
+
+# Serve React admin dashboard (if built)
+frontend_dist = os.path.join(os.path.dirname(__file__), "frontend", "dist")
+frontend_index = os.path.join(frontend_dist, "index.html")
 
 if os.path.exists(frontend_dist):
     # Mount entire dist directory as static files under /admin
-    # This handles all assets, vite.svg, etc.
-    app.mount("/admin", StaticFiles(directory=frontend_dist, html=True), name="admin_static")
-    logger.info("✅ Admin dashboard available at /admin")
+    # Using custom class for cache-busting headers
+    app.mount("/admin", CacheBustedStaticFiles(directory=frontend_dist, html=True), name="admin_static")
+    logger.info("✅ Admin dashboard available at /admin (with cache-busting)")
 else:
     logger.warning("⚠️  Admin dashboard not built - run 'cd frontend && npm run build'")
 
