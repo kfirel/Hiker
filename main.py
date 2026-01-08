@@ -100,6 +100,27 @@ app.include_router(admin.router)
 frontend_dist = os.path.join(os.path.dirname(__file__), "frontend", "dist")
 frontend_index = os.path.join(frontend_dist, "index.html")
 
+# Custom middleware to add cache-busting headers
+@app.middleware("http")
+async def add_cache_headers(request: Request, call_next):
+    response = await call_next(request)
+    
+    # For admin static files
+    if request.url.path.startswith("/admin"):
+        # index.html - always revalidate
+        if request.url.path.endswith(".html") or request.url.path == "/admin" or request.url.path == "/admin/":
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+        # JS/CSS assets with hash - cache forever
+        elif "/assets/" in request.url.path and (request.url.path.endswith(".js") or request.url.path.endswith(".css")):
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        # Other static files - moderate caching
+        else:
+            response.headers["Cache-Control"] = "public, max-age=3600"
+    
+    return response
+
 if os.path.exists(frontend_dist):
     # Mount entire dist directory as static files under /admin
     # This handles all assets, vite.svg, etc.
