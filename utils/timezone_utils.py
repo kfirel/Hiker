@@ -39,3 +39,5 @@ def israel_now_isoformat() -> str:
     """
     return get_israel_now().isoformat()
 
+
+

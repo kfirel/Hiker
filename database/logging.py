@@ -226,3 +226,5 @@ async def clean_old_logs(db: firestore.Client, days: int = 90) -> int:
         logger.error(f"❌ Error cleaning old logs: {e}")
         return 0
 
+
+

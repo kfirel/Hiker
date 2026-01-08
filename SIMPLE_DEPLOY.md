@@ -150,3 +150,5 @@ gcloud run logs read hitchhiking-bot --limit 50
 
 **זהו! בהצלחה! 🚀**
 
+
+

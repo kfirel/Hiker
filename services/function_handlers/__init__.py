@@ -110,6 +110,39 @@ def _format_user_records_list(driver_rides: List[Dict], hitchhiker_requests: Lis
     
     return msg.strip()
 
+def find_conflict(user_data: dict, role: str, destination: str, travel_date: str) -> dict:
+    """
+    Find conflicting records (driver vs hitchhiker for same destination+date).
+    
+    Args:
+        user_data: User data dictionary with rides and requests
+        role: The role being created ("driver" or "hitchhiker")
+        destination: Destination to check
+        travel_date: Date to check (YYYY-MM-DD)
+    
+    Returns:
+        dict with conflict info if found, None otherwise
+    """
+    opposite_role = "hitchhiker" if role == "driver" else "driver"
+    opposite_key = "hitchhiker_requests" if opposite_role == "hitchhiker" else "driver_rides"
+    
+    records = user_data.get(opposite_key, [])
+    for idx, record in enumerate(records):
+        record_dest = record.get("destination", "").strip()
+        record_date = record.get("travel_date", "")
+        
+        # Normalize destinations for comparison
+        if record_dest.lower() == destination.lower() and record_date == travel_date:
+            return {
+                "role": opposite_role,
+                "record_number": idx + 1,
+                "destination": record_dest,
+                "date": record_date,
+                "time": record.get("departure_time", "")
+            }
+    
+    return None
+
 async def handle_update_user_records(phone_number: str, arguments: Dict, collection_prefix: str = "", send_whatsapp: bool = True) -> Dict:
     """Handle update_user_records function call"""
     from database import add_user_ride_or_request, get_user_rides_and_requests
@@ -163,6 +196,16 @@ async def handle_update_user_records(phone_number: str, arguments: Dict, collect
         logger.warning(f"⚠️ Missing travel_date and days! Arguments: {arguments}")
         return {"status": "error", "message": "חסר תאריך או ימים"}
     
+    # NEW: Check for conflicts (only for one-time trips with travel_date)
+    travel_date = arguments.get("travel_date")
+    if travel_date:
+        conflict = find_conflict(user_data, role, destination, travel_date)
+        if conflict:
+            return (
+                f"DUPLICATE_CONFLICT|{role}|{conflict['role']}|{destination}|{travel_date}|"
+                f"{departure_time}|{conflict['record_number']}"
+            )
+    
     def build_record(origin_val, destination_val, departure_time_val):
         """Helper function to build a record"""
         record = {
@@ -202,7 +245,7 @@ async def handle_update_user_records(phone_number: str, arguments: Dict, collect
             record.update({
                 "travel_date": arguments.get("travel_date"),
                 "departure_time": departure_time_val,
-                "flexibility": arguments.get("flexibility", "very_flexible")  # Default: very flexible (±6h)
+                "flexibility": arguments.get("flexibility", "flexible")  # Default: flexible (±1h based on distance)
             })
             
             # 🗺️ Geocode origin and destination for map display
@@ -214,7 +257,7 @@ async def handle_update_user_records(phone_number: str, arguments: Dict, collect
                 if origin_coords and dest_coords:
                     record["origin_coordinates"] = origin_coords
                     record["destination_coordinates"] = dest_coords
-                    logger.info(f"📍 Geocoded hitchhiker locations: {origin_val} → {dest_val}")
+                    logger.info(f"📍 Geocoded hitchhiker locations: {origin_val} → {destination_val}")
                 else:
                     logger.warning(f"⚠️ Could not geocode hitchhiker locations")
             except Exception as e:
@@ -373,14 +416,15 @@ async def handle_update_user_records(phone_number: str, arguments: Dict, collect
             msg = f"מעולה! הטרמפ הקבוע שלך ל{destination} נשמר 🚗"
         else:
             msg = f"מעולה! הטרמפ שלך ל{destination} נשמר 🚗"
+        # Don't show hitchhiker matches to driver (policy decision)
         if matches:
-            msg += f"\n✨ כבר נמצאו {len(matches)} טרמפיסטים מתאימים!"
+            logger.info(f"🔕 Suppressing hitchhiker match count for driver ({len(matches)} matches found)")
     else:
         # Hitchhiker - add flexibility info
         msg = f"הבקשה שלך ל{destination} נשמרה! 🎒"
         
         # Calculate and show time flexibility
-        flexibility_level = record.get("flexibility", "very_flexible")
+        flexibility_level = record.get("flexibility", "flexible")
         logger.info(f"📊 Flexibility saved in record: {flexibility_level}")
         
         if matches:
@@ -396,22 +440,21 @@ async def handle_update_user_records(phone_number: str, arguments: Dict, collect
     
     msg += f"\n\n📋 הנסיעות שלך עכשיו:\n\n{list_msg}"
     
-    # In sandbox mode (send_whatsapp=False), include match details in the main message
-    if matches and not send_whatsapp:
-        logger.info(f"📝 Adding {len(matches)} match details to message (sandbox mode)")
+    # For test users: include match details in the main message
+    # ONLY for hitchhikers - drivers should NOT see hitchhiker details
+    from config import TEST_USERS
+    is_test_user = phone_number in TEST_USERS
+    
+    if matches and is_test_user and role == "hitchhiker":
+        logger.info(f"📝 Adding {len(matches)} driver details to message (test user, hitchhiker)")
         logger.info(f"   Current message length before adding matches: {len(msg)}")
         from services import matching_service
         msg += "\n\n💡 התאמות שנמצאו:"
         for i, match in enumerate(matches, 1):
             try:
-                if role == "hitchhiker":
-                    # Show driver details
-                    logger.info(f"   Formatting driver {i}: {match.get('phone_number')} to {match.get('destination')}")
-                    match_msg = matching_service._format_driver_message(match)
-                else:
-                    # Show hitchhiker details
-                    logger.info(f"   Formatting hitchhiker {i}: {match.get('phone_number')} to {match.get('destination')}")
-                    match_msg = matching_service._format_hitchhiker_message(match, destination)
+                # Show driver details to hitchhiker
+                logger.info(f"   Formatting driver {i}: {match.get('phone_number')} to {match.get('destination')}")
+                match_msg = matching_service._format_driver_message(match)
                 logger.info(f"   Match message length: {len(match_msg)}")
                 msg += f"\n\n{i}. {match_msg}"
             except Exception as e:
@@ -419,8 +462,11 @@ async def handle_update_user_records(phone_number: str, arguments: Dict, collect
                 msg += f"\n\n{i}. שגיאה בפורמט ההתאמה"
         
         logger.info(f"   ✅ Finished adding matches, final message length: {len(msg)}")
+    elif matches and is_test_user and role == "driver":
+        logger.info(f"🚗 Driver added: Found {len(matches)} hitchhiker matches but NOT showing them to driver (policy)")
     
-    # Send match notifications AFTER the success message (with small delay) - only in production
+    # Send match notifications AFTER the success message (with small delay)
+    # Always send notifications - whatsapp_service will handle test users automatically
     if matches and send_whatsapp:
         import asyncio
         
@@ -444,6 +490,11 @@ async def handle_view_user_records(phone_number: str, collection_prefix: str = "
         return {"status": "success", "message": "אין לך רשומות פעילות כרגע"}
     
     msg = _format_user_records_list(drivers, hitchhikers)
+    
+    # Add helpful note if user has hitchhiker requests
+    if hitchhikers:
+        msg += "\n\n💡 המערכת מחפשת התאמות אוטומטית. נודיע לך ברגע שנהג יתפנה!"
+    
     return {"status": "success", "message": msg}
 
 async def handle_delete_user_record(phone_number: str, arguments: Dict, collection_prefix: str = "") -> Dict:
@@ -473,9 +524,12 @@ async def handle_delete_user_record(phone_number: str, arguments: Dict, collecti
             "message": f"אין {record_type} מספר {record_number} (יש לך {len(records)} {record_type}ים)"
         }
     
-    # Get the actual record (0-based array)
-    record = records[record_number - 1]
+    # IMPORTANT: The display list is REVERSED, convert display number to array index
+    actual_index = len(records) - record_number
+    record = records[actual_index]
     record_id = record.get("id")
+    
+    logger.info(f"🔍 Deleting display record #{record_number} → array index [{actual_index}]: {record.get('destination')}")
     
     if not record_id:
         return {"status": "error", "message": "שגיאה: הרשומה לא מכילה מזהה"}
@@ -608,9 +662,14 @@ async def handle_update_user_record(phone_number: str, arguments: Dict, collecti
             "message": f"אין {record_type} מספר {record_number} (יש לך {len(records)} {record_type}ים)"
         }
     
-    # Get the actual record (0-based array)
-    record = records[record_number - 1]
+    # IMPORTANT: The display list is REVERSED (newest first), but the DB array is not!
+    # Convert from display number to actual array index
+    # Display: [1:newest, 2:older, 3:oldest] → Array: [0:oldest, 1:older, 2:newest]
+    actual_index = len(records) - record_number
+    record = records[actual_index]
     record_id = record.get("id")
+    
+    logger.info(f"🔍 Converting display record #{record_number} → array index [{actual_index}]: {record.get('destination')}")
     
     if not record_id:
         return {"status": "error", "message": "שגיאה: הרשומה לא מכילה מזהה"}
@@ -651,6 +710,10 @@ async def handle_update_user_record(phone_number: str, arguments: Dict, collecti
     if needs_route_recalc and role == "driver":
         updates["route_calculation_pending"] = True
     
+    # DEBUG: Log what we're updating
+    logger.info(f"🔍 DEBUG update_user_record: Updating {role} record {record_number} (id={record_id}) with: {updates}")
+    logger.info(f"   Before update: {record.get('destination')} at {record.get('departure_time')}")
+    
     # Update in DB
     success = await update_user_ride_or_request(phone_number, role, record_id, updates, collection_prefix)
     
@@ -659,10 +722,14 @@ async def handle_update_user_record(phone_number: str, arguments: Dict, collecti
     
     # Get updated record for matching
     data = await get_user_rides_and_requests(phone_number, collection_prefix)
+    
+    # IMPORTANT: Convert display number to array index (list is reversed in display)
     if role == "driver":
-        updated_record = data.get("driver_rides", [])[record_number - 1]
+        rides = data.get("driver_rides", [])
+        updated_record = rides[len(rides) - record_number]
     else:
-        updated_record = data.get("hitchhiker_requests", [])[record_number - 1]
+        requests = data.get("hitchhiker_requests", [])
+        updated_record = requests[len(requests) - record_number]
     
     # 🆕 Recalculate route in background if origin/destination changed
     if needs_route_recalc and role == "driver":
@@ -691,9 +758,22 @@ async def handle_update_user_record(phone_number: str, arguments: Dict, collecti
     
     if matches:
         msg += f"\n\n🎯 נמצאו {len(matches)} התאמות חדשות!"
+    else:
+        # Inform user that search was performed but no matches found
+        msg += "\n\n🔍 חיפשתי התאמות אבל לא נמצאו כרגע"
     
     # Get updated list
     data = await get_user_rides_and_requests(phone_number, collection_prefix)
+    
+    # DEBUG: Log the updated record to verify it was actually updated
+    if role == "driver":
+        rides = data.get("driver_rides", [])
+        if record_number <= len(rides):
+            actual_record = rides[record_number - 1]
+            logger.info(f"🔍 DEBUG update_user_record: Record {record_number} after update: {actual_record.get('destination')} at {actual_record.get('departure_time')}")
+        else:
+            logger.warning(f"⚠️ DEBUG: record_number {record_number} > len(rides) {len(rides)}")
+    
     list_msg = _format_user_records_list(
         data.get("driver_rides", []),
         data.get("hitchhiker_requests", [])
@@ -743,3 +823,60 @@ async def handle_show_help(phone_number: str, collection_prefix: str = "") -> Di
         "status": "success",
         "message": HELP_MESSAGE
     }
+
+async def handle_resolve_duplicate(
+    phone_number: str,
+    args: dict,
+    collection_prefix: str = "",
+    send_whatsapp: bool = True
+) -> str:
+    """
+    Resolve driver/hitchhiker conflict by deleting one and creating the other.
+    
+    Args:
+        phone_number: User's phone number
+        args: Arguments containing:
+            - delete_role: "driver" or "hitchhiker" (what to delete)
+            - delete_record_number: Record number to delete
+            - create_role: "driver" or "hitchhiker" (what to create)
+            - destination: Destination for new record
+            - travel_date: Date for new record
+            - departure_time: Time for new record
+        collection_prefix: Collection prefix for sandbox mode
+        send_whatsapp: Whether to send WhatsApp notifications
+    
+    Returns:
+        Result message from creating the new record
+    """
+    logger.info(f"🔄 Resolving duplicate conflict for {phone_number}")
+    logger.info(f"   Delete: {args['delete_role']} #{args['delete_record_number']}")
+    logger.info(f"   Create: {args['create_role']} to {args['destination']}")
+    
+    # Step 1: Delete the conflicting record
+    delete_result = await handle_delete_user_record(
+        phone_number,
+        {
+            "role": args["delete_role"],
+            "record_number": args["delete_record_number"]
+        },
+        collection_prefix
+    )
+    
+    logger.info(f"   Delete result: {delete_result.get('status')}")
+    
+    # Step 2: Create the new record
+    create_result = await handle_update_user_records(
+        phone_number,
+        {
+            "role": args["create_role"],
+            "destination": args["destination"],
+            "travel_date": args["travel_date"],
+            "departure_time": args["departure_time"]
+        },
+        collection_prefix,
+        send_whatsapp=send_whatsapp
+    )
+    
+    logger.info(f"   Create result: {create_result.get('status') if isinstance(create_result, dict) else 'success'}")
+    
+    return create_result

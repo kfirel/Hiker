@@ -189,3 +189,5 @@ gcloud run services delete hitchhiking-bot --region us-central1
 
 **זהו! המערכת שלך חיה בענן! ☁️**
 
+
+

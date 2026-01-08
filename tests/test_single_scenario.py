@@ -290,3 +290,5 @@ async def run_beer_sheva_scenario():
 if __name__ == "__main__":
     asyncio.run(run_beer_sheva_scenario())
 
+
+

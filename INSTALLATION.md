@@ -139,3 +139,5 @@ gcloud run deploy hiker-bot \
 2. `python main.py`
 3. גש ל-http://localhost:8080/admin
 
+
+

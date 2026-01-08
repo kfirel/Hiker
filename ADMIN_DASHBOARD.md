@@ -321,3 +321,5 @@ echo $GOOGLE_CLOUD_PROJECT
 
 שימוש פנימי עבור קהילת גברעם בלבד.
 
+
+

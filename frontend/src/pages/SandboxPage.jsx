@@ -74,8 +74,35 @@ function ChatPanel({ user, environment }) {
   const [message, setMessage] = useState('');
   const [chatHistory, setChatHistory] = useState([]);
   const [showQuickMessages, setShowQuickMessages] = useState(false);
+  const [isSending, setIsSending] = useState(false);
   const messagesEndRef = useRef(null);
   const queryClient = useQueryClient();
+
+  // Helper function to clean metadata from messages
+  const cleanMetadata = (content) => {
+    // Remove [CONFLICT:...] metadata that's meant for AI only
+    if (typeof content === 'string') {
+      return content.replace(/\s*\[CONFLICT:[^\]]+\]\s*$/, '');
+    }
+    return content;
+  };
+
+  // Sync chatHistory with user.chat_history from server
+  // But skip if we're currently sending (to avoid overwriting optimistic updates)
+  useEffect(() => {
+    if (user.chat_history && Array.isArray(user.chat_history) && !isSending) {
+      const serverHistory = user.chat_history.map(msg => ({
+        role: msg.role || (msg.content.startsWith('👤') ? 'user' : 'assistant'),
+        content: cleanMetadata(msg.content), // Clean metadata before displaying
+        timestamp: msg.timestamp
+      }));
+      
+      console.log(`🔄 [${user.phone}] Syncing chat history: ${user.chat_history.length} messages, message_count: ${user.message_count}`);
+      setChatHistory(serverHistory);
+    } else {
+      console.log(`⏸️ [${user.phone}] Skipping sync: isSending=${isSending}, has_history=${!!user.chat_history}`);
+    }
+  }, [user.message_count, user.phone, isSending]); // Re-sync when message count changes
 
   const sendMutation = useMutation({
     mutationFn: (msg) => SANDBOX_API.sendMessage({
@@ -84,6 +111,8 @@ function ChatPanel({ user, environment }) {
       environment
     }),
     onMutate: (sentMessage) => {
+      // Mark as sending to prevent useEffect from overwriting
+      setIsSending(true);
       // Add user message immediately (optimistic update)
       setChatHistory(prev => [
         ...prev,
@@ -102,6 +131,8 @@ function ChatPanel({ user, environment }) {
         ];
       });
       queryClient.invalidateQueries(['sandboxUsers', environment]);
+      // Allow useEffect to sync again after a short delay
+      setTimeout(() => setIsSending(false), 500);
     },
     onError: (error, sentMessage) => {
       // Remove loading message on error
@@ -119,6 +150,8 @@ function ChatPanel({ user, environment }) {
           }
         ];
       });
+      // Allow useEffect to sync again
+      setIsSending(false);
     },
     retry: false  // Don't retry on failure
   });
@@ -229,7 +262,8 @@ function ChatPanel({ user, environment }) {
 }
 
 function SandboxPage() {
-  const [environment, setEnvironment] = useState('test');
+  // Test users always use 'test' environment (test_ collections)
+  const environment = 'test';
   const [showAllRides, setShowAllRides] = useState(false);
   const queryClient = useQueryClient();
 
@@ -259,10 +293,6 @@ function SandboxPage() {
   });
 
   const handleReset = () => {
-    if (environment === 'production') {
-      alert('⚠️ לא ניתן לאפס נתוני ייצור!');
-      return;
-    }
     if (window.confirm('האם אתה בטוח שברצונך לאפס את כל נתוני הטסט?')) {
       resetMutation.mutate();
     }
@@ -278,31 +308,8 @@ function SandboxPage() {
             <p className="text-gray-600 mt-1">סביבת בדיקות עם 4 משתמשי טסט</p>
           </div>
 
-          {/* Environment Switch */}
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2">
-              <span className={`text-sm font-medium ${environment === 'test' ? 'text-gray-400' : 'text-gray-900'}`}>
-                Production
-              </span>
-              <button
-                onClick={() => setEnvironment(environment === 'test' ? 'production' : 'test')}
-                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                  environment === 'test' ? 'bg-blue-600' : 'bg-gray-300'
-                }`}
-              >
-                <span
-                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                    environment === 'test' ? 'translate-x-6' : 'translate-x-1'
-                  }`}
-                />
-              </button>
-              <span className={`text-sm font-medium ${environment === 'test' ? 'text-blue-600' : 'text-gray-400'}`}>
-                Test
-              </span>
-            </div>
-
-            {environment === 'test' && (
-              <div className="flex gap-2">
+          {/* Action Buttons */}
+          <div className="flex gap-2">
                 <button
                   onClick={() => {
                     setShowAllRides(true);
@@ -320,17 +327,25 @@ function SandboxPage() {
                   🗑️ אפס הכל
                 </button>
               </div>
-            )}
-          </div>
         </div>
 
       </div>
 
       {/* Chat Panels */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {TEST_USERS.map((user) => (
-          <ChatPanel key={user.phone} user={user} environment={environment} />
-        ))}
+        {TEST_USERS.map((staticUser) => {
+          // Find matching user data from server (includes chat_history)
+          const serverUser = usersData?.users?.find(u => u.phone_number === staticUser.phone);
+          
+          // Merge static info (name, color) with server data (chat_history)
+          const mergedUser = {
+            ...staticUser,
+            chat_history: serverUser?.chat_history || [],
+            message_count: serverUser?.message_count || 0
+          };
+          
+          return <ChatPanel key={staticUser.phone} user={mergedUser} environment={environment} />;
+        })}
       </div>
 
       {/* All Rides Modal */}

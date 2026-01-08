@@ -2,355 +2,80 @@
 import logging
 from google import genai
 from google.genai import types
-from config import GEMINI_API_KEY, AI_CONTEXT_MESSAGES
+from config import GEMINI_API_KEY, AI_CONTEXT_MESSAGES, AI_CONTEXT_MAX_AGE_HOURS
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """אתה עוזר חכם למערכת טרמפים של גברעם.
+SYSTEM_PROMPT = """🚨 כלל #1: אתה רק קורא לפונקציות. אסור להחזיר טקסט!
 
-תפקידך: לעזור למשתמשים להזין מידע בצורה טבעית.
+אתה עוזר למערכת טרמפים. תפקידך: לקרוא לפונקציה המתאימה.
 
-⚠️ חשוב: כשאתה מזהה פעולה (כמו שמירת נסיעה), קרא לפונקציה המתאימה באמצעות function calling.
-אל תכתב טקסט כמו "[קורא ל-..." - פשוט הפעל את הפונקציה!
-הדוגמאות למטה מראות מתי לקרוא לפונקציה (לא מה להחזיר כטקסט).
+❌ אסור: "נשמר!", "נמחק!", "יש לך 2 נסיעות..." - אלה טקסט!
+✅ חובה: תמיד קרא לפונקציה!
 
-זיהוי תפקידים - חשוב מאוד!
-- נהג (driver): משתמש שאומר "אני נוסע", "אני מגיע", "אני יוצא" - הוא מציע נסיעה!
-  * נסיעה קבועה: destination, days ["Sunday", "Monday"...], departure_time
-  * נסיעה חד-פעמית: destination, travel_date (YYYY-MM-DD), departure_time
-- טרמפיסט (hitchhiker): משתמש שאומר "מחפש/מחפשת טרמפ", "צריך/צריכה נסיעה", "מבקש/מבקשת טרמפ"
-  * תמיד חד-פעמי: destination, travel_date (YYYY-MM-DD), departure_time, flexibility
+פונקציות זמינות:
+- update_user_records - שמירת נסיעה
+- delete_all_user_records - מחיקת נסיעות
+- delete_user_record - מחיקת נסיעה ספציפית
+- view_user_records - הצגת נסיעות
+- show_help - עזרה
+- ask_clarification - שאלת הבהרה (כשחסר מידע!)
+- resolve_duplicate - פתרון התנגשות בין driver ו-hitchhiker
 
-גמישות זמנים (רק לטרמפיסטים!):
-- strict: "בדיוק ב", "רק בזמן", "חייב להגיע ב", "לא גמיש" → flexibility="strict" (±30 דקות)
-- flexible: "גמיש", "לא נורא", "בערך" (כשציין שעה) → flexibility="flexible" (±0.5-3 שעות לפי מרחק)
-- very_flexible: "מאוד גמיש", "כל זמן טוב", או כשלא ציין שעה → flexibility="very_flexible" (±6 שעות!)
+🚨 זיהוי דופליקציות - חשוב מאוד! 🚨
+כשההודעה האחרונה שלי מכילה [CONFLICT:...]:
 
-חשוב: 
-- אם לא צוינה שעה מפורשת → very_flexible (±6 שעות תמיד!)
-- אם ציין שעה → flexible (±0.5-3 שעות לפי מרחק)
-- אם ציין "בדיוק"/"חייב" → strict (±30 דקות)
-- נהגים לא צריכים flexibility!
+אם משתמש עונה "כן"/"אוקיי"/"בטח" → קרא ל-resolve_duplicate!
+דוגמה:
+  ההודעה שלי: "יש לך בקשה... [CONFLICT:hitchhiker:1:driver:קרית גת:2026-01-09:08:00]"
+  משתמש: "כן"
+  → קרא ל-resolve_duplicate({
+      delete_role: "hitchhiker",
+      delete_record_number: 1,
+      create_role: "driver",
+      destination: "קרית גת",
+      travel_date: "2026-01-09",
+      departure_time: "08:00"
+    })
 
-זמנים יחסיים (חשב לפי התאריך והשעה הנוכחית):
-תאריכים:
-- "עכשיו"/"בזמן הקרוב"/"בשעה הקרובה"/"בקרוב" → תאריך של היום
-- "היום" → תאריך של היום
-- "מחר" → תאריך של מחר (+1 יום)
-- "מחרתיים" → (+2 ימים)
-- "יום ראשון הבא" → חשב את התאריך
+אם משתמש עונה "לא"/"בטל" → ask_clarification("בסדר, לא נוגע בכלום")
 
-שעות:
-- "עכשיו"/"בזמן הקרוב"/"בשעה הקרובה"/"בקרוב" → השעה הנוכחית (עיגול כלפי מעלה)
+זיהוי שאלות (לא בקשות ליצירה!):
+- "יש טרמפ?", "מישהו נוסע?", "יש נהג?" → קרא ל-view_user_records (הצגת נסיעות קיימות)
+- אלה שאלות, לא בקשות ליצור רשומה חדשה!
+- אם יש בקשות/נסיעות קיימות ללא התאמות → view_user_records יראה את זה
+
+תפקידים (ליצירת רשומות חדשות):
+- נהג (driver): "אני נוסע/מגיע/יוצא" 
+- טרמפיסט (hitchhiker): "מחפש/צריך טרמפ"
+- לא ברור מההודעה → טרמפיסט
+
+זמנים יחסיים:
+- "עכשיו"/"היום" → תאריך היום (אבל! אם השעה המבוקשת כבר עברה → מחר)
+- "מחר" → +1 יום
 - "בבוקר" → 08:00
-- "בצהריים"/"צהריים" → 12:00
-- "אחרי הצהריים"/"אחה״צ" → 14:00
+- "בצהריים" → 12:00
 - "בערב" → 18:00
 - "בלילה" → 20:00
-- "באחת בבוקר" → 01:00
-- "באחת אחר הצהריים" / "בשעה 1" (אחר הצהריים) → 13:00
-- **"באחת" / "ב-1" / "בשתיים" (1-7 ללא הקשר) → שאל הבהרה!**
+- שעה 1-7 ללא "בבוקר"/"בערב" → שאל הבהרה
+- חשוב! אם משתמש אומר "בערב" בשעה 23:00 → הכוונה למחר!
 
-זיהוי שעות אמביגואליות:
-- שעות 1-7 ללא הקשר ("בבוקר"/"בערב"/"אחר הצהריים") = לא ברור!
-  * "באחת" / "בשתיים" / "ב-3" וכו' (1-7) → שאל הבהרה
-  * "באחת בבוקר" → 01:00 (ברור)
-  * "באחת אחר הצהריים" → 13:00 (ברור)
-- שעות 8-23 = ברורות (08:00-23:00)
-- חצות / 24 / 0 = 00:00
+עקרון זהב:
+- שאלה? (יש/מישהו/קיים) → view_user_records (הצג מה שיש)
+- יש יעד+תאריך+שעה → update_user_records (צור רשומה)
+- חסר מידע → ask_clarification (שאל שאלה)
 
-אם שעה 1-7 ללא הקשר → שאל:
-"האם התכוונת ל-X בבוקר (0X:00) או X אחר הצהריים (1X:00)?"
+דוגמאות:
+1. "אני נוסע לתל אביב מחר ב-10" → [קרא ל-update_user_records עם role="driver"...]
+2. "מחפש טרמפ לירושלים מחר בבוקר" → [קרא ל-update_user_records עם role="hitchhiker"...]
+3. "מחק הכל" → [קרא ל-delete_all_user_records עם role="all"]
+4. "?" → [קרא ל-show_help]
+5. משתמש עונה "כן" אחרי שאלת CONFLICT → [קרא ל-resolve_duplicate עם הפרמטרים מה-CONFLICT!]
+6. משתמש עונה "לא" אחרי שאלת CONFLICT → [קרא ל-ask_clarification("בסדר, לא נוגע בכלום")]
+7. "אני צריך טרמפ לתל אביב" (חסר תאריך) → [קרא ל-ask_clarification עם question="באיזה יום?"]
+8. "יש טרמפ עכשיו?" → [קרא ל-view_user_records] (שאלה, לא יצירת רשומה!)
 
-ימים בשבוע (תרגם לאנגלית):
-- ראשון → Sunday, שני → Monday, שלישי → Tuesday, וכו'
-- "כל יום" / "כל הימים" → [Sunday, Monday, Tuesday, Wednesday, Thursday, Friday, Saturday]
-- "ימים א-ה" → [Sunday, Monday, Tuesday, Wednesday, Thursday]
-
-כללי זיהוי חשובים:
-1. "אני נוסע/נוסעת/מגיע/מגיעה/יוצא/יוצאת" = נהג (driver)
-2. "מחפש/מחפשת/מבקש/מבקשת/צריך/צריכה טרמפ/נסיעה" = טרמפיסט (hitchhiker)
-3. "חוזר/חוזרת לקיבוץ/לגברעם מX" = נהג עם origin=X, destination="גברעם" (רק נהגים!)
-4. "וחוזר ב-X" / "וחוזר בשעה X" = return_trip=true, return_time=X (יוצר 2 נסיעות)
-5. ביטויי זמן יחסי:
-   - "בזמן הקרוב"/"בקרוב"/"עכשיו"/"בשעה הקרובה" = היום (travel_date=היום)
-   - אם לא צוינה שעה מפורשת → שאל "באיזו שעה?"
-
-הבדל חשוב בין טרמפ לבקשה:
-- טרמפ/נסיעה = driver (נהג שמציע נסיעה)
-- בקשה = hitchhiker (טרמפיסט שמחפש נסיעה)
-
-כללי מחיקה - חשוב מאוד!
-1. "מחק הכל" / "נקה הכל" → role="all" (מחק גם טרמפים וגם בקשות)
-2. "מחק את כל הנסיעות" / "מחק את הנסיעות" (כללי) → role="all" (מחק הכל)
-3. "מחק טרמפים" / "מחק את הטרמפים שלי" / "מחק נסיעות שלי" (driver) → role="driver"
-4. "מחק בקשות" / "מחק את הבקשות שלי" → role="hitchhiker"
-5. "מחק נסיעה X" (ספציפי עם מספר) → role="driver", record_number=X
-6. "מחק בקשה X" (ספציפי עם מספר) → role="hitchhiker", record_number=X
-
-הערה: המילה "נסיעות" לבד = כללי (role="all"), אבל "נסיעות שלי" כנהג = role="driver"
-
-התנהגות - חשוב מאוד!
-1. לטרמפיסטים: **חובה** לשלוח travel_date (אף פעם לא days)
-2. לנהגים חד-פעמיים: **חובה** לשלוח travel_date (לא days)
-3. לנהגים קבועים: **חובה** לשלוח days (לא travel_date)
-4. אם יש את כל המידע → **קרא מיד ל-update_user_records ללא אישורים!**
-5. אם חסר מידע → שאל רק את מה שחסר
-6. אם טרמפיסט אומר "אני צריך טרמפ" בלי יעד → **אל תקרא ל-update_user_records!**
-   במקום זה: "חסר יעד. לאן אתה צריך/ה? (למשל: אני צריך טרמפ לתל אביב)"
-7. אם משתמש כותב שעה לא ברורה (1-7 בלי "בבוקר"/"בערב") → **שאל הבהרה!**
-   שעות 1-7 יכולות להיות בוקר או אחר הצהריים
-   למשל: "האם התכוונת ל-2 בבוקר (02:00) או 2 אחר הצהריים (14:00)?"
-   
-   שעות ברורות (לא צריך לשאול):
-   - 8-12: צהריים (08:00-12:00)
-   - 13-23: אחר הצהריים/ערב (13:00-23:00)
-   - 0/24: חצות (00:00)
-
-8. אם משתמש לא ציין תאריך מפורש → **שאל מתי!**
-   תאריכים מפורשים שמותר לשמור:
-   - "היום" / "עכשיו" / "בקרוב" / "בזמן הקרוב" → היום
-   - "מחר" → מחר
-   - "מחרתיים" → מחרתיים  
-   - "ביום X" / "ביום ראשון" / "ב-15/1" → תאריך ספציפי
-   
-   אם המשתמש לא ציין אף אחד מאלה → שאל:
-   "מתי אתה צריך/ה? (למשל: מחר, היום, ביום ראשון)"
-
-9. אם משתמש לא ציין שעה כלל → **שאל באיזו שעה!**
-   שעות מפורשות שמותר לשמור:
-   - "בבוקר" → 08:00
-   - "בצהריים" / "צהריים" → 12:00
-   - "אחרי הצהריים" / "אחה״צ" → 14:00
-   - "בערב" → 18:00
-   - "בלילה" → 20:00
-   - "בשעה X" / "ב-X" (שעה ספציפית 0-23) → XX:00
-   
-   אם המשתמש לא ציין אף אחד מאלה → שאל:
-   "באיזו שעה? (למשל: בשעה 8, בבוקר, בערב)"
-
-זיהוי origin ו-destination:
-- אם אומרים "מX" → origin=X
-- אם אומרים "לY" → destination=Y
-- אם נהג אומר רק "מX" (חוזר) → origin=X, destination="גברעם"
-- אם טרמפיסט אומר "מX" → origin=X, destination="גברעם"
-- אם אומרים רק "לY" → origin="גברעם", destination=Y
-- **חשוב: אם אין destination בכלל או לא ברור - אל תשמור! שאל את המשתמש**
-- דוגמאות:
-  * "מאשדוד" = origin="אשדוד", destination="גברעם"
-  * "לירושלים" = origin="גברעם", destination="ירושלים"
-  * "מתל אביב לחיפה" = origin="תל אביב", destination="חיפה"
-
-דבר בעברית, ידידותי וקצר.
-
-עכשיו דוגמאות למידה:
-
-דוגמה 1:
-משתמש: "מבקש טרמפ למחר בבוקר לאשקלון"
-אתה: [קורא ל-update_user_records עם: role="hitchhiker", destination="אשקלון", travel_date="2026-01-02", departure_time="08:00"]
-
-דוגמה 2:
-משתמש: "אני נוסע לירושלים בימים א-ה בשעה 8"
-אתה: [קורא ל-update_user_records עם: role="driver", destination="ירושלים", days=["Sunday","Monday","Tuesday","Wednesday","Thursday"], departure_time="08:00"]
-
-דוגמה 3:
-משתמש: "אני נוסע מחרתיים לאילת בשעה 10"
-אתה: [קורא ל-update_user_records עם: role="driver", destination="אילת", travel_date="2026-01-03", departure_time="10:00"]
-
-דוגמה 3.4 - שיחה מלאה עם שאלות (דוגמה חשובה!):
-הודעה 1:
-משתמש: "אני צריכה טרמפ"
-אתה: "חסר יעד. לאן את צריכה?"
-הודעה 2:
-משתמש: "תל אביב"
-אתה: "מתי את צריכה? (למשל: מחר, היום)"
-הודעה 3:
-משתמש: "מחר"
-אתה: "באיזו שעה? (למשל: בשעה 8, בבוקר, בערב)"
-הודעה 4:
-משתמש: "בבוקר"
-אתה: [קורא ל-update_user_records עם: role="hitchhiker", destination="תל אביב", travel_date="2026-01-03", departure_time="08:00", flexibility="flexible"]
-הסבר: עכשיו יש את כל המידע הדרוש!
-
-דוגמה 3.5 - חסר יעד (אל תשמור!):
-משתמש: "אני צריכה טרמפ"
-אתה: "חסר יעד. לאן את צריכה? (למשל: אני צריכה טרמפ לתל אביב)"
-הסבר: אין destination! אסור לשמור ללא יעד תקין!
-
-דוגמה 3.6 - המשך שיחה - עדיין חסר תאריך:
-היסטוריה: משתמש אמר "אני צריכה טרמפ", עניתי "חסר יעד. לאן את צריכה?"
-משתמש (עכשיו): "לתל אביב"
-אתה: "מתי את צריכה? (למשל: מחר, היום, ביום ראשון)"
-הסבר: יש destination, אבל אין travel_date! עדיין חסר מידע!
-
-דוגמה 3.6.1 - המשך שיחה - עדיין חסר שעה:
-היסטוריה: אמרה "אני צריכה טרמפ", שאלתי "לאן?", אמרה "תל אביב", שאלתי "מתי?"
-משתמש (עכשיו): "מחר"
-אתה: "באיזו שעה? (למשל: בשעה 8, בבוקר, בערב)"
-הסבר: יש יעד ותאריך, אבל עדיין חסרה שעה!
-
-דוגמה 3.6.2 - עכשיו יש הכל:
-היסטוריה: שאלתי יעד, תאריך, ושעה
-משתמש (עכשיו): "בערב"
-אתה: [קורא ל-update_user_records עם: role="hitchhiker", destination="תל אביב", travel_date="2026-01-03", departure_time="18:00", flexibility="flexible"]
-הסבר: עכשיו יש את כל המידע - אפשר לשמור!
-
-דוגמה 3.7 - שעה לא ברורה (1-7 ללא הקשר):
-משתמש: "אני צריכה טרמפ לתל אביב מחר באחת"
-אתה: "האם התכוונת ל-1 בבוקר (01:00) או 1 אחר הצהריים (13:00)?"
-הסבר: "באחת" יכול להיות 01:00 או 13:00! חייבים לשאול!
-
-דוגמה 3.8 - שעה ברורה עם הקשר:
-משתמש: "אני צריכה טרמפ לתל אביב מחר באחת בבוקר"
-אתה: [קורא ל-update_user_records עם: role="hitchhiker", destination="תל אביב", travel_date="2026-01-03", departure_time="01:00", flexibility="very_flexible"]
-הסבר: "באחת בבוקר" = 01:00 (ברור!)
-
-דוגמה 3.9 - שעה ברורה (8+):
-משתמש: "אני צריך טרמפ לירושלים מחר ב-10"
-אתה: [קורא ל-update_user_records עם: role="hitchhiker", destination="ירושלים", travel_date="2026-01-03", departure_time="10:00", flexibility="flexible"]
-הסבר: 10 = 10:00 (בוקר, ברור!)
-
-דוגמה 3.10 - המשך שיחה אחרי הבהרת שעה (אבל עדיין חסר תאריך!):
-היסטוריה: משתמש אמר "טרמפ לתל אביב באחת", שאלתי "1 בבוקר או אחה״צ?"
-משתמש (עכשיו): "אחר הצהריים"
-אתה: "מתי אתה צריך? (למשל: מחר, היום)"
-הסבר: השעה התבהרה (13:00), אבל אין תאריך! עדיין חסר מידע!
-
-דוגמה 3.10.1 - עכשיו יש הכל:
-היסטוריה: שאלתי על שעה (ענה "אחה״צ"), שאלתי "מתי?"
-משתמש (עכשיו): "מחר"
-אתה: [קורא ל-update_user_records עם: role="hitchhiker", destination="תל אביב", travel_date="2026-01-03", departure_time="13:00", flexibility="flexible"]
-הסבר: עכשיו יש הכל - יעד, תאריך, שעה!
-
-דוגמה 3.11 - חסר תאריך (אל תשמור!):
-משתמש: "אני צריך טרמפ לתל אביב"
-אתה: "מתי אתה צריך? (למשל: מחר, היום, ביום ראשון)"
-הסבר: אין תאריך מפורש! אסור לשמור ללא "היום"/"מחר"/"ביום X"
-
-דוגמה 3.12 - יש תאריך אבל חסר שעה:
-משתמש: "אני צריך טרמפ לתל אביב מחר"
-אתה: "באיזו שעה? (למשל: בשעה 8, בבוקר, בערב)"
-הסבר: יש תאריך אבל אין שעה! חייב לשאול על השעה!
-
-דוגמה 3.13 - המשך שיחה אחרי שאלה על שעה:
-היסטוריה: משתמש אמר "טרמפ לתל אביב מחר", שאלתי "באיזו שעה?"
-משתמש (עכשיו): "בבוקר"
-אתה: [קורא ל-update_user_records עם: role="hitchhiker", destination="תל אביב", travel_date="2026-01-03", departure_time="08:00", flexibility="flexible"]
-הסבר: המשתמש הבהיר - בבוקר = 08:00!
-
-דוגמה 3.14 - יש הכל (תאריך + שעה):
-משתמש: "אני צריך טרמפ לתל אביב מחר בבוקר"
-אתה: [קורא ל-update_user_records עם: role="hitchhiker", destination="תל אביב", travel_date="2026-01-03", departure_time="08:00", flexibility="flexible"]
-הסבר: "מחר" = תאריך, "בבוקר" = 08:00 - הכל ברור!
-
-דוגמה 4 - צפייה ברשימה:
-משתמש: "איזה נסיעות יש לי?"
-אתה: [קורא ל-view_user_records]
-
-דוגמה 5 - עדכון:
-משתמש: "תעדכן נסיעה 2 לשעה 15"
-אתה: [קורא ל-update_user_record עם: role="driver", record_number=2, departure_time="15:00"]
-
-דוגמה 6 - מחיקה:
-משתמש: "תמחק נסיעה 1"
-אתה: [קורא ל-delete_user_record עם: role="driver", record_number=1]
-
-דוגמה 7 - מחיקת כל הטרמפים (נהגים):
-משתמש: "מחק את כל הטרמפים" או "מחק טרמפים" או "מחק את הנסיעות שלי"
-אתה: [קורא ל-delete_all_user_records עם: role="driver"]
-
-דוגמה 7.1 - מחיקת כל הבקשות (טרמפיסטים):
-משתמש: "מחק את כל הבקשות" או "מחק בקשות"
-אתה: [קורא ל-delete_all_user_records עם: role="hitchhiker"]
-
-דוגמה 7.2 - מחיקת הכל לחלוטין:
-משתמש: "מחק הכל" או "נקה הכל" או "מחק את הנסיעות"
-אתה: [קורא ל-delete_all_user_records עם: role="all"]
-הסבר: "הכל" או "הנסיעות" (כללי) = גם טרמפים וגם בקשות
-
-דוגמה 7.4 - מחיקה של הטרמפים שלי כנהג:
-משתמש: "מחק את הנסיעות שלי" או "מחק טרמפים"
-אתה: [קורא ל-delete_all_user_records עם: role="driver"]
-הסבר: "הנסיעות שלי" = רק driver (אם המשתמש הוא נהג)
-
-דוגמה 7.3 - מחיקה (שגיאה נפוצה!):
-משתמש: "מחק את הבקשה לאילת" (אבל בבדיקה ברשימה - אילת היא טרמפ, לא בקשה!)
-אתה: [קורא ל-delete_user_record עם: role="driver", record_number=1]
-חשוב: תמיד תבדוק ברשימה אם זה באמת טרמפ או בקשה!
-
-דוגמה 8 - נהג חוזר (כיוון הפוך):
-משתמש: "אני חוזר לקיבוץ מאשקלון מחר בשעה 10"
-אתה: [קורא ל-update_user_records עם: role="driver", origin="אשקלון", destination="גברעם", travel_date="2026-01-03", departure_time="10:00"]
-
-דוגמה 9 - נהג הלוך-שוב חד-פעמי:
-משתמש: "אני נוסע לבאר שבע מחר בשעה 8 וחוזר ב-10"
-אתה: [קורא ל-update_user_records עם: role="driver", origin="גברעם", destination="באר שבע", travel_date="2026-01-03", departure_time="08:00", return_trip=true, return_time="10:00"]
-
-דוגמה 10 - נהג הלוך-שוב קבוע:
-משתמש: "אני נוסע לבאר שבע כל יום בשעה 8 וחוזר ב-10"
-אתה: [קורא ל-update_user_records עם: role="driver", origin="גברעם", destination="באר שבע", days=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"], departure_time="08:00", return_trip=true, return_time="10:00"]
-
-דוגמה 11 - טרמפיסט מחפש "מX" (origin מפורש) - חסר שעה:
-משתמש: "מחפשת טרמפ בזמן הקרוב מאשדוד"
-אתה: "באיזו שעה? (למשל: בשעה 8, בבוקר, בערב)"
-הסבר: "מאשדוד" = origin, "גברעם" = destination, "בזמן הקרוב" = היום, אבל חסרה שעה!
-
-דוגמה 12 - טרמפיסט מחפש "לY" (destination מפורש):
-משתמש: "מחפש טרמפ לירושלים מחר בבוקר"
-אתה: [קורא ל-update_user_records עם: role="hitchhiker", origin="גברעם", destination="ירושלים", travel_date="2026-01-03", departure_time="08:00"]
-הסבר: "לירושלים" = destination, "גברעם" = origin (ברירת מחדל)
-
-דוגמה 13 - טרמפיסט עם שעה מפורשת:
-משתמש: "מחפשת טרמפ בזמן הקרוב מאשדוד בערב"
-אתה: [קורא ל-update_user_records עם: role="hitchhiker", origin="אשדוד", destination="גברעם", travel_date="2026-01-02", departure_time="18:00", flexibility="flexible"]
-הסבר: "בזמן הקרוב" = היום, "בערב" = 18:00, "מאשדוד" = origin
-
-דוגמה 14 - בקשת עזרה או צפייה בנסיעות:
-משתמש: "?" / "עזרה" / "help" / "מה אפשר לעשות" / "איך זה עובד" / "הסבר" / "תעזור לי"
-אתה: [קורא ל-show_help]
-הסבר: אם יש למשתמש נסיעות פעילות - מציג אותן. אם אין - מציג הודעת עזרה
-
-דוגמה 15 - חסר שעה (שאל!):
-משתמש: "אני צריך טרמפ לאשקלון מחר"
-אתה: "באיזו שעה? (למשל: בשעה 8, בבוקר, בערב)"
-הסבר: לא ציין שעה → חייב לשאול!
-
-דוגמה 15.1 - המשך אחרי שאלה על שעה:
-היסטוריה: משתמש אמר "טרמפ לאשקלון מחר", שאלתי "באיזו שעה?"
-משתמש (עכשיו): "לא משנה, כל שעה טובה"
-אתה: [קורא ל-update_user_records עם: role="hitchhiker", destination="אשקלון", travel_date="2026-01-03", departure_time="08:00", flexibility="very_flexible"]
-הסבר: "כל שעה טובה" = very_flexible! השעה לא חשובה אז נשתמש ב-08:00 כברירת מחדל
-
-דוגמה 16 - גמישות strict (טרמפיסט לא גמיש):
-משתמש: "צריכה טרמפ לתל אביב מחר בדיוק בשעה 8, חייבת להגיע בזמן"
-אתה: [קורא ל-update_user_records עם: role="hitchhiker", destination="תל אביב", travel_date="2026-01-03", departure_time="08:00", flexibility="strict"]
-
-דוגמה 17 - גמישות flexible (עם שעה):
-משתמש: "מחפש טרמפ לאילת מחר בשעה 10, גמיש"
-אתה: [קורא ל-update_user_records עם: role="hitchhiker", destination="אילת", travel_date="2026-01-03", departure_time="10:00", flexibility="flexible"]
-
-דוגמה 18 - גמישות very_flexible (מפורש):
-משתמש: "מחפש טרמפ למצפה רמון מחר בשעה 11, אני מאוד גמיש"
-אתה: [קורא ל-update_user_records עם: role="hitchhiker", destination="מצפה רמון", travel_date="2026-01-03", departure_time="11:00", flexibility="very_flexible"]
-
-חשוב - מתי לקרוא לפונקציה ומתי לא:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-✅ קרא לפונקציה רק אם יש את כל המידע הדרוש:
-   - destination תקין (לא "גברעם" לטרמפיסט)
-   - travel_date מפורש ("היום"/"מחר"/"ביום X") או days לנהג קבוע
-   - departure_time ברור (שעות 8+ או 1-7 עם "בבוקר"/"אחה״צ" או ביטויים כמו "בבוקר"/"בערב")
-   
-❌ אל תקרא לפונקציה אם חסר מידע - במקום זה ענה בטקסט:
-   - אין destination → "חסר יעד. לאן אתה צריך/ה?"
-   - אין travel_date → "מתי אתה צריך/ה? (למשל: מחר, היום)"
-   - אין departure_time → "באיזו שעה? (למשל: בשעה 8, בבוקר, בערב)"
-   - שעה לא ברורה (1-7) → "האם התכוונת ל-X בבוקר או אחה״צ?"
-   
-🔍 כללי פונקציות:
-- לעדכון ומחיקה: המשתמש צריך לדעת את המספר מהרשימה
-- "חוזר" רק לנהגים! טרמפיסטים צריכים להגיד מפורש "מחפש טרמפ מX לY"
-- כש-return_trip=true, המערכת תיצור אוטומטית 2 נסיעות (הלוך וחזור)
-- מחיקה: "מחק הכל" = role="all", "מחק טרמפים" = role="driver", "מחק בקשות" = role="hitchhiker"
+🚨 זכור: אין טקסט! תמיד function call!
 """
 
 # Function declarations
@@ -454,6 +179,20 @@ FUNCTIONS = [
         }
     },
     {
+        "name": "ask_clarification",
+        "description": "שאל שאלת הבהרה למשתמש כשחסר מידע (יעד, תאריך, שעה, וכו'). קרא לפונקציה הזו במקום להחזיר טקסט.",
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "question": {
+                    "type": "STRING",
+                    "description": "השאלה לשאול למשתמש. דוגמאות: 'באיזה יום?', 'באיזו שעה?', 'לאן אתה צריך?'"
+                }
+            },
+            "required": ["question"]
+        }
+    },
+    {
         "name": "update_user_record",
         "description": "עדכון נסיעה או בקשה קיימת לפי מספר סידורי. אפשר לעדכן יעד, שעה, תאריך או ימים. חובה לציין לפחות שדה אחד לעדכון!",
         "parameters": {
@@ -497,8 +236,84 @@ FUNCTIONS = [
             "properties": {},
             "required": []
         }
+    },
+    {
+        "name": "resolve_duplicate",
+        "description": "Resolve conflict between driver ride and hitchhiker request for same destination+date. Call this after user confirms deletion.",
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "delete_role": {
+                    "type": "STRING",
+                    "enum": ["driver", "hitchhiker"],
+                    "description": "Which record type to delete"
+                },
+                "delete_record_number": {
+                    "type": "INTEGER",
+                    "description": "Record number to delete (from conflict message)"
+                },
+                "create_role": {
+                    "type": "STRING",
+                    "enum": ["driver", "hitchhiker"],
+                    "description": "Which record type to create"
+                },
+                "destination": {
+                    "type": "STRING",
+                    "description": "Destination for the new record"
+                },
+                "travel_date": {
+                    "type": "STRING",
+                    "description": "Travel date in YYYY-MM-DD format"
+                },
+                "departure_time": {
+                    "type": "STRING",
+                    "description": "Departure time in HH:MM format"
+                }
+            },
+            "required": ["delete_role", "delete_record_number", "create_role", "destination", "travel_date", "departure_time"]
+        }
     }
 ]
+
+def filter_recent_messages(history: list, max_age_hours: int = 1) -> list:
+    """
+    Filter chat history to only include messages from the last N hours.
+    This ensures AI context stays relevant and recent.
+    
+    Args:
+        history: List of chat messages with timestamps
+        max_age_hours: Maximum age of messages in hours (default: 1)
+        
+    Returns:
+        Filtered list of recent messages
+    """
+    from datetime import datetime, timedelta
+    from utils import get_israel_now
+    
+    if not history:
+        return []
+    
+    now = get_israel_now()
+    cutoff_time = now - timedelta(hours=max_age_hours)
+    
+    recent_messages = []
+    for msg in history:
+        timestamp_str = msg.get("timestamp")
+        if not timestamp_str:
+            # No timestamp = include (backwards compatibility)
+            recent_messages.append(msg)
+            continue
+        
+        try:
+            # Parse ISO format: "2026-01-08T15:30:00+02:00"
+            msg_time = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+            if msg_time >= cutoff_time:
+                recent_messages.append(msg)
+        except Exception:
+            # Parsing failed = include message (fail-safe)
+            recent_messages.append(msg)
+    
+    return recent_messages
 
 async def process_message_with_ai(phone_number: str, message_text: str, user_data: dict, is_new_user: bool = False):
     """Process message with Gemini AI"""
@@ -510,7 +325,8 @@ async def process_message_with_ai(phone_number: str, message_text: str, user_dat
         handle_delete_user_record,
         handle_delete_all_user_records,
         handle_update_user_record,
-        handle_show_help
+        handle_show_help,
+        handle_resolve_duplicate
     )
     from utils import get_israel_now
     
@@ -522,8 +338,12 @@ async def process_message_with_ai(phone_number: str, message_text: str, user_dat
     now = get_israel_now()
     current_context = f"\n\n[מידע נוכחי: תאריך היום: {now.strftime('%Y-%m-%d')}, שעה: {now.strftime('%H:%M')}, יום: {now.strftime('%A')}]"
     
-    # Build chat history - send only last N messages to AI (to save costs)
-    history = user_data.get("chat_history", [])[-AI_CONTEXT_MESSAGES:]  # Last 10 messages for AI
+    # Build chat history - filter by time first, then take last N messages
+    all_history = user_data.get("chat_history", [])
+    # Step 1: Filter by time (only last 1 hour)
+    recent_history = filter_recent_messages(all_history, AI_CONTEXT_MAX_AGE_HOURS)
+    # Step 2: Take last 10 messages from recent ones
+    history = recent_history[-AI_CONTEXT_MESSAGES:]
     messages = [{"role": msg["role"], "parts": [{"text": msg["content"]}]} for msg in history]
     messages.append({"role": "user", "parts": [{"text": message_text + current_context}]})
     
@@ -546,7 +366,7 @@ async def process_message_with_ai(phone_number: str, message_text: str, user_dat
                         tools=[types.Tool(function_declarations=FUNCTIONS)],
                         tool_config=types.ToolConfig(
                             function_calling_config=types.FunctionCallingConfig(
-                                mode="AUTO"
+                                mode="ANY"
                             )
                         ),
                         temperature=0.1
@@ -584,7 +404,10 @@ async def process_message_with_ai(phone_number: str, message_text: str, user_dat
             logger.info(f"📋 Arguments: {func_args}")
             
             # Execute function
-            if func_name == "update_user_records":
+            if func_name == "ask_clarification":
+                # Return the question wrapped in a dict
+                result = {"status": "success", "message": func_args.get("question", "?")}
+            elif func_name == "update_user_records":
                 result = await handle_update_user_records(phone_number, func_args)
             elif func_name == "view_user_records":
                 result = await handle_view_user_records(phone_number)
@@ -596,10 +419,40 @@ async def process_message_with_ai(phone_number: str, message_text: str, user_dat
                 result = await handle_update_user_record(phone_number, func_args)
             elif func_name == "show_help":
                 result = await handle_show_help(phone_number)
+            elif func_name == "resolve_duplicate":
+                result = await handle_resolve_duplicate(phone_number, func_args)
             else:
                 result = {"message": "פונקציה לא מוכרת"}
             
-            reply = result.get("message", "בוצע!")
+            # Check if result is a DUPLICATE_CONFLICT string
+            if isinstance(result, str) and result.startswith("DUPLICATE_CONFLICT"):
+                # Parse: DUPLICATE_CONFLICT|new_role|old_role|dest|date|time|record_num
+                parts = result.split("|")
+                if len(parts) >= 7:
+                    new_role = parts[1]
+                    old_role = parts[2]
+                    dest = parts[3]
+                    date = parts[4]
+                    record_num = parts[6]
+                    
+                    # Translate roles to Hebrew
+                    old_role_heb = "בקשה לטרמפ" if old_role == "hitchhiker" else "נסיעת נהג"
+                    new_role_heb = "נסיעת נהג" if new_role == "driver" else "בקשה לטרמפ"
+                    
+                    # Format question with hidden metadata for AI
+                    time = parts[5] if len(parts) > 5 else "08:00"
+                    # Clean message for user (without metadata)
+                    reply_to_user = f"יש לך {old_role_heb} ל{dest} ב-{date}. למחוק אותה וליצור {new_role_heb}?"
+                    # Full message with metadata for AI history
+                    reply_for_history = f"{reply_to_user} [CONFLICT:{old_role}:{record_num}:{new_role}:{dest}:{date}:{time}]"
+                    logger.info(f"✅ Detected conflict, asking user: {reply_to_user}")
+                else:
+                    logger.error(f"❌ Invalid DUPLICATE_CONFLICT format: {result}")
+                    reply_to_user = "מצטער, הייתה בעיה בזיהוי הנסיעה הקיימת. נסה שוב"
+                    reply_for_history = reply_to_user
+            else:
+                reply_to_user = result.get("message", "בוצע!")
+                reply_for_history = reply_to_user
         else:
             # Regular text response
             reply = first_part.text if hasattr(first_part, 'text') else "קיבלתי!"
@@ -608,13 +461,16 @@ async def process_message_with_ai(phone_number: str, message_text: str, user_dat
             if reply.startswith("[קורא ל-") or reply.startswith("אתה: [קורא"):
                 logger.warning(f"⚠️ AI returned debug message instead of function call: {reply}")
                 reply = "מעבד את הבקשה..."
+            
+            reply_to_user = reply
+            reply_for_history = reply
         
-        # Send reply
-        await send_whatsapp_message(phone_number, reply)
+        # Send reply to user (clean version)
+        await send_whatsapp_message(phone_number, reply_to_user)
         
-        # Save to history
+        # Save to history (with metadata for AI)
         await add_message_to_history(phone_number, "user", message_text)
-        await add_message_to_history(phone_number, "assistant", reply)
+        await add_message_to_history(phone_number, "assistant", reply_for_history)
         
     except Exception as e:
         logger.error(f"AI error: {e}", exc_info=True)
@@ -635,7 +491,8 @@ async def process_message_with_ai_sandbox(phone_number: str, message_text: str, 
         handle_delete_user_record,
         handle_delete_all_user_records,
         handle_update_user_record,
-        handle_show_help
+        handle_show_help,
+        handle_resolve_duplicate
     )
     from utils import get_israel_now
     
@@ -650,8 +507,12 @@ async def process_message_with_ai_sandbox(phone_number: str, message_text: str, 
     now = get_israel_now()
     current_context = f"\n\n[מידע נוכחי: תאריך היום: {now.strftime('%Y-%m-%d')}, שעה: {now.strftime('%H:%M')}, יום: {now.strftime('%A')}]"
     
-    # Build chat history
-    history = user_data.get("chat_history", [])[-AI_CONTEXT_MESSAGES:]
+    # Build chat history - filter by time first, then take last N messages
+    all_history = user_data.get("chat_history", [])
+    # Step 1: Filter by time (only last 1 hour)
+    recent_history = filter_recent_messages(all_history, AI_CONTEXT_MAX_AGE_HOURS)
+    # Step 2: Take last 10 messages from recent ones
+    history = recent_history[-AI_CONTEXT_MESSAGES:]
     messages = [{"role": msg["role"], "parts": [{"text": msg["content"]}]} for msg in history]
     messages.append({"role": "user", "parts": [{"text": message_text + current_context}]})
     
@@ -737,8 +598,11 @@ async def process_message_with_ai_sandbox(phone_number: str, message_text: str, 
             
             # Execute REAL function handlers with collection_prefix
             logger.info(f"   AI Step 9: Executing handler for {func_name}...")
-            if func_name == "update_user_records":
-                result = await handle_update_user_records(phone_number, func_args, collection_prefix, send_whatsapp=False)
+            if func_name == "ask_clarification":
+                # Return the question wrapped in a dict
+                result = {"status": "success", "message": func_args.get("question", "?")}
+            elif func_name == "update_user_records":
+                result = await handle_update_user_records(phone_number, func_args, collection_prefix, send_whatsapp=True)
             elif func_name == "view_user_records":
                 result = await handle_view_user_records(phone_number, collection_prefix)
             elif func_name == "delete_user_record":
@@ -746,15 +610,46 @@ async def process_message_with_ai_sandbox(phone_number: str, message_text: str, 
             elif func_name == "delete_all_user_records":
                 result = await handle_delete_all_user_records(phone_number, func_args, collection_prefix)
             elif func_name == "update_user_record":
-                result = await handle_update_user_record(phone_number, func_args, collection_prefix, send_whatsapp=False)
+                result = await handle_update_user_record(phone_number, func_args, collection_prefix, send_whatsapp=True)
             elif func_name == "show_help":
                 result = await handle_show_help(phone_number, collection_prefix)
+            elif func_name == "resolve_duplicate":
+                result = await handle_resolve_duplicate(phone_number, func_args, collection_prefix, send_whatsapp=True)
             else:
                 logger.warning(f"   AI Step 9: Unknown function: {func_name}")
                 result = {"message": "פונקציה לא מוכרת"}
             
             logger.info(f"   AI Step 10: Handler completed, result length: {len(str(result))}")
-            reply = result.get("message", "בוצע!")
+            
+            # Check if result is a DUPLICATE_CONFLICT string
+            if isinstance(result, str) and result.startswith("DUPLICATE_CONFLICT"):
+                # Parse: DUPLICATE_CONFLICT|new_role|old_role|dest|date|time|record_num
+                parts = result.split("|")
+                if len(parts) >= 7:
+                    new_role = parts[1]
+                    old_role = parts[2]
+                    dest = parts[3]
+                    date = parts[4]
+                    record_num = parts[6]
+                    
+                    # Translate roles to Hebrew
+                    old_role_heb = "בקשה לטרמפ" if old_role == "hitchhiker" else "נסיעת נהג"
+                    new_role_heb = "נסיעת נהג" if new_role == "driver" else "בקשה לטרמפ"
+                    
+                    # Format question with hidden metadata for AI
+                    time = parts[5] if len(parts) > 5 else "08:00"
+                    # Clean message for user (without metadata)
+                    reply_to_user = f"יש לך {old_role_heb} ל{dest} ב-{date}. למחוק אותה וליצור {new_role_heb}?"
+                    # Full message with metadata for AI history
+                    reply_for_history = f"{reply_to_user} [CONFLICT:{old_role}:{record_num}:{new_role}:{dest}:{date}:{time}]"
+                    logger.info(f"   AI Step 10.1: Detected conflict, asking user: {reply_to_user}")
+                else:
+                    logger.error(f"   AI Step 10.1: Invalid DUPLICATE_CONFLICT format: {result}")
+                    reply_to_user = "מצטער, הייתה בעיה בזיהוי הנסיעה הקיימת. נסה שוב"
+                    reply_for_history = reply_to_user
+            else:
+                reply_to_user = result.get("message", "בוצע!")
+                reply_for_history = reply_to_user
         else:
             # Regular text response
             reply = first_part.text if hasattr(first_part, 'text') else "קיבלתי!"
@@ -763,16 +658,19 @@ async def process_message_with_ai_sandbox(phone_number: str, message_text: str, 
             if reply.startswith("[קורא ל-") or reply.startswith("אתה: [קורא"):
                 logger.warning(f"⚠️ AI returned debug message instead of function call: {reply}")
                 reply = "מעבד את הבקשה..."
+            
+            reply_to_user = reply
+            reply_for_history = reply
         
-        # Save to sandbox history
+        # Save to sandbox history (with metadata for AI)
         logger.info(f"   AI Step 11: Saving to chat history...")
         await add_message_to_history_sandbox(phone_number, "user", message_text, collection_prefix)
         logger.info(f"   AI Step 12: User message saved")
-        await add_message_to_history_sandbox(phone_number, "assistant", reply, collection_prefix)
-        logger.info(f"   AI Step 13: Assistant message saved")
+        await add_message_to_history_sandbox(phone_number, "assistant", reply_for_history, collection_prefix)
+        logger.info(f"   AI Step 13: Assistant message saved (metadata included for AI)")
         
-        logger.info(f"   AI Step 14: ✅ AI Service COMPLETE, returning reply (length: {len(reply)})")
-        return reply
+        logger.info(f"   AI Step 14: ✅ AI Service COMPLETE, returning clean reply to user (length: {len(reply_to_user)})")
+        return reply_to_user
         
     except Exception as e:
         logger.error(f"   AI ERROR: 🧪 Sandbox AI error at some step: {type(e).__name__}: {str(e)}", exc_info=True)

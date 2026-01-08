@@ -62,3 +62,5 @@ For manual deployment:
 1. Build: `npm run build`
 2. The `dist/` folder is served by FastAPI at `/admin`
 
+
+

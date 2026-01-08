@@ -19,8 +19,17 @@ GOOGLE_CLOUD_PROJECT = os.getenv("GOOGLE_CLOUD_PROJECT")
 # App settings
 PORT = int(os.getenv("PORT", 8080))
 MAX_CHAT_HISTORY = 100  # Store last 100 messages in database (for admin view)
-AI_CONTEXT_MESSAGES = 5  # Send only last 5 messages to AI (to save costs and reduce API latency)
+AI_CONTEXT_MESSAGES = 10  # Send up to last 10 messages to AI
+AI_CONTEXT_MAX_AGE_HOURS = 1  # Only include messages from last 1 hour
 DEFAULT_NOTIFICATION_LEVEL = "all"
+
+# Test Users - These users use test collections and messages appear in Sandbox UI
+TEST_USERS = [
+    '972500000001',
+    '972500000002', 
+    '972500000003',
+    '972500000004'
+]
 
 # Route Matching - Dynamic Threshold Configuration
 ROUTE_PROXIMITY_MIN_THRESHOLD_KM = 1  # Minimum threshold for short routes
@@ -45,16 +54,16 @@ API_TIMEOUT_SECONDS = 10
 
 # Messages
 WELCOME_MESSAGE = """שלום {name}! 👋
-
 ברוך הבא למערכת הטרמפים של גברעם! 🚗
 
-🎒 מחפש טרמפ? 
-   "אני צריך טרמפ לתל אביב מחר ב 13"
+🚗 נהג? שתף את הנסיעות שלך:
+   • קבוע: "נוסע לירושלים כל ראשון ב-8"
+   • חד-פעמי: "נוסע מחר לתל אביב ב-10"
+   המערכת תמצא לך טרמפיסטים אוטומטית!
    
-🚗 נהג? 
-   "אני נוסע לירושלים כל יום ראשון ב-8"
+🎒 טרמפיסט? "צריך טרמפ לתל אביב מחר ב-13"
 
-💡 לעזרה בכל שלב, כתוב "עזרה"
+💡 עזרה → כתוב "עזרה"
 
 בואו נתחיל! 😊"""
 

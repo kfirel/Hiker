@@ -71,3 +71,5 @@ coords = geocode_address("גברעם")
 - [תיעוד מלא](../docs/implementation/GEOCODING_SETUP.md)
 - [יישום טכני](../docs/implementation/GEOJSON_IMPLEMENTATION.md)
 
+
+

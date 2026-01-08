@@ -71,3 +71,5 @@ python3 -m pytest tests/
 - ✅ Background processing
 - ✅ ויזואליזציה על מפות
 
+
+

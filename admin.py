@@ -1232,11 +1232,11 @@ async def send_sandbox_message(
     """
     Send a message to the bot as if from a WhatsApp user (for testing)
     
-    The message is processed through the normal flow but uses test collections
+    Test users use the same collections and logic as regular users,
+    but messages appear in the Sandbox UI instead of WhatsApp
     """
-    from database import get_db
-    from database.firestore_client import get_or_create_user_sandbox, add_message_to_history_sandbox
-    from services.ai_service import process_message_with_ai_sandbox
+    from database import get_db, get_or_create_user, add_message_to_history
+    from services.ai_service import process_message_with_ai
     from config import get_welcome_message
     
     try:
@@ -1244,28 +1244,21 @@ async def send_sandbox_message(
         if not db:
             raise HTTPException(status_code=503, detail="Database not available")
         
-        collection_prefix = "test_" if request.environment == "test" else ""
-        
         logger.info(f"🧪 Sandbox message from {request.phone_number} [{request.environment}]: {request.message}")
         logger.info(f"   Step 1: Getting or creating user...")
         
-        # Get or create test user
-        user_data, is_new_user = await get_or_create_user_sandbox(
-            request.phone_number, 
-            f"Test User {request.phone_number[-4:]}",
-            collection_prefix
-        )
+        # Get or create user (same as regular users)
+        user_data, is_new_user = await get_or_create_user(request.phone_number)
         logger.info(f"   Step 2: User loaded, is_new={is_new_user}")
         
         # If new user, send welcome
         if is_new_user:
             logger.info(f"   Step 3: New user, sending welcome...")
             welcome_msg = get_welcome_message(user_data.get("name"))
-            await add_message_to_history_sandbox(
+            await add_message_to_history(
                 request.phone_number, 
                 "assistant", 
-                welcome_msg, 
-                collection_prefix
+                welcome_msg
             )
             logger.info(f"   Step 4: Welcome sent, returning response")
             return {
@@ -1277,7 +1270,7 @@ async def send_sandbox_message(
                 "is_new_user": True
             }
         
-        # Check for admin commands (same as production)
+        # Check for admin commands
         logger.info(f"   Step 3: Checking for admin commands...")
         if request.message.startswith("/a"):
             logger.info(f"   Step 4: Admin command detected")
@@ -1285,22 +1278,20 @@ async def send_sandbox_message(
                 request.phone_number, 
                 request.message, 
                 db,
-                collection_prefix=collection_prefix  # Use test collections for admin commands too
+                collection_prefix=""  # Regular collections
             )
             
             if admin_response:
                 logger.info(f"   Step 5: Admin command handled, saving to history...")
-                await add_message_to_history_sandbox(
+                await add_message_to_history(
                     request.phone_number, 
                     "user", 
-                    request.message, 
-                    collection_prefix
+                    request.message
                 )
-                await add_message_to_history_sandbox(
+                await add_message_to_history(
                     request.phone_number, 
                     "assistant", 
-                    admin_response, 
-                    collection_prefix
+                    admin_response
                 )
                 logger.info(f"   Step 6: Admin response ready, returning")
                 return {
@@ -1312,23 +1303,43 @@ async def send_sandbox_message(
                     "is_new_user": False
                 }
         
-        # Process with AI
+        # Process with AI (same as regular users)
         logger.info(f"   Step 4: Calling AI service...")
         logger.info(f"   User data keys: {list(user_data.keys())}")
         logger.info(f"   Chat history length: {len(user_data.get('chat_history', []))}")
         
-        response = await process_message_with_ai_sandbox(
+        # Use regular AI processing - WhatsApp messages are handled automatically
+        # (test users will have messages saved to history instead of WhatsApp)
+        await process_message_with_ai(
             request.phone_number, 
             request.message, 
             user_data,
-            collection_prefix
+            is_new_user=False
         )
         
+        logger.info(f"   Step 5: AI processing complete")
+        
+        # Get the latest response from chat history
+        updated_user = await get_or_create_user(request.phone_number)
+        updated_user_data = updated_user[0]
+        chat_history = updated_user_data.get("chat_history", [])
+        
+        # Get last assistant message
+        response = "מעבד..."
+        for msg in reversed(chat_history):
+            if msg.get("role") == "assistant":
+                response = msg.get("content", "")
+                break
+        
+        # Clean metadata from response (meant for AI only, not for user display)
+        import re
+        response = re.sub(r'\s*\[CONFLICT:[^\]]+\]\s*$', '', response)
+        
         response_preview = response[:200] if response and len(response) > 200 else response
-        logger.info(f"   Step 5: AI response received (length: {len(response) if response else 0})")
+        logger.info(f"   Step 6: Retrieved response from history (length: {len(response)})")
         logger.info(f"   Response preview: {response_preview}{'...' if response and len(response) > 200 else ''}")
         
-        logger.info(f"   Step 6: Preparing final response...")
+        logger.info(f"   Step 7: Preparing final response...")
         result = {
             "status": "success",
             "phone_number": request.phone_number,
@@ -1337,7 +1348,7 @@ async def send_sandbox_message(
             "response": response,
             "is_new_user": False
         }
-        logger.info(f"   Step 7: ✅ ENDPOINT COMPLETE - returning response to frontend")
+        logger.info(f"   Step 8: ✅ ENDPOINT COMPLETE - returning response to frontend")
         return result
     
     except Exception as e:
@@ -1350,29 +1361,31 @@ async def get_sandbox_users(
     environment: str = "test",
     _: bool = Depends(verify_admin_token)
 ):
-    """Get test users for the sandbox"""
+    """Get test users for the sandbox (from regular users collection)"""
     from database import get_db
+    from config import TEST_USERS
     
     try:
         db = get_db()
         if not db:
             raise HTTPException(status_code=503, detail="Database not available")
         
-        collection_prefix = "test_" if environment == "test" else ""
-        collection_name = f"{collection_prefix}users"
-        
+        # Test users are in the regular 'users' collection
         users = []
-        docs = db.collection(collection_name).limit(10).stream()
+        for phone in TEST_USERS:
+            doc = db.collection("users").document(phone).get()
+            if doc.exists:
+                user_data = doc.to_dict()
+                chat_history = user_data.get("chat_history", [])[-10:]  # Last 10 messages
+                logger.info(f"📊 User {phone}: {len(chat_history)} messages in history")
+                users.append({
+                    "phone_number": user_data.get("phone_number"),
+                    "name": user_data.get("name"),
+                    "chat_history": chat_history,
+                    "message_count": len(user_data.get("chat_history", []))
+                })
         
-        for doc in docs:
-            user_data = doc.to_dict()
-            users.append({
-                "phone_number": user_data.get("phone_number"),
-                "name": user_data.get("name"),
-                "chat_history": user_data.get("chat_history", [])[-10:],  # Last 10 messages
-                "message_count": len(user_data.get("chat_history", []))
-            })
-        
+        logger.info(f"✅ Returning {len(users)} sandbox users")
         return {
             "environment": environment,
             "users": users,
@@ -1389,25 +1402,25 @@ async def get_sandbox_all_rides(
     environment: str = "test",
     _: bool = Depends(verify_admin_token)
 ):
-    """Get all rides and requests in sandbox for debugging"""
+    """Get all rides and requests for test users (from regular collections)"""
     from database import get_db
+    from config import TEST_USERS
     
     try:
         db = get_db()
         if not db:
             raise HTTPException(status_code=503, detail="Database not available")
         
-        collection_prefix = "test_" if environment == "test" else ""
-        collection_name = f"{collection_prefix}users"
-        
+        # Test users are in the regular 'users' collection
         all_drivers = []
         all_hitchhikers = []
         
-        docs = db.collection(collection_name).stream()
-        
-        for doc in docs:
+        for phone in TEST_USERS:
+            doc = db.collection("users").document(phone).get()
+            if not doc.exists:
+                continue
+                
             user_data = doc.to_dict()
-            phone = user_data.get("phone_number")
             name = user_data.get("name")
             
             # Get driver rides
@@ -1454,8 +1467,9 @@ async def reset_sandbox(
     environment: str = "test",
     _: bool = Depends(verify_admin_token)
 ):
-    """Reset all test data (delete test collections)"""
+    """Reset test users data (clear rides, requests, and chat history)"""
     from database import get_db
+    from config import TEST_USERS
     
     if environment == "production":
         raise HTTPException(status_code=403, detail="Cannot reset production data via API")
@@ -1465,22 +1479,28 @@ async def reset_sandbox(
         if not db:
             raise HTTPException(status_code=503, detail="Database not available")
         
-        # Delete all test collections
-        test_collections = ["test_users", "test_matches"]
-        deleted_count = 0
+        # Clear data for test users only
+        cleared_count = 0
         
-        for collection_name in test_collections:
-            docs = db.collection(collection_name).stream()
-            for doc in docs:
-                doc.reference.delete()
-                deleted_count += 1
+        for phone in TEST_USERS:
+            doc_ref = db.collection("users").document(phone)
+            doc = doc_ref.get()
+            
+            if doc.exists:
+                # Clear rides, requests, and chat history but keep the user
+                doc_ref.update({
+                    "driver_rides": [],
+                    "hitchhiker_requests": [],
+                    "chat_history": []
+                })
+                cleared_count += 1
         
-        logger.info(f"🧹 Sandbox reset: deleted {deleted_count} documents")
+        logger.info(f"🧹 Sandbox reset: cleared data for {cleared_count} test users")
         
         return {
             "status": "success",
-            "deleted_documents": deleted_count,
-            "message": "Sandbox has been reset"
+            "cleared_users": cleared_count,
+            "message": "Test users data has been reset"
         }
     
     except Exception as e:

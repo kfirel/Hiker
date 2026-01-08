@@ -219,24 +219,15 @@ async def send_match_notifications(role: str, matches: List[Dict], new_record: D
         driver_msg = _format_driver_message(new_record)
         for hitchhiker in matches:
             await send_whatsapp_message(hitchhiker["phone_number"], driver_msg)
-        
-        # Also notify driver about matching hitchhikers
-        driver_phone = new_record.get("phone_number")
-        for hitchhiker in matches:
-            hitchhiker_msg = _format_hitchhiker_message(hitchhiker, new_record.get("destination"))
-            await send_whatsapp_message(driver_phone, hitchhiker_msg)
+        logger.info(f"✅ Notified {len(matches)} hitchhikers about new driver")
     
     elif role == "hitchhiker":
-        # Hitchhiker added → notify hitchhiker about drivers
+        # Hitchhiker added → notify hitchhiker about drivers (not drivers about hitchhiker)
         hitchhiker_phone = new_record.get("phone_number")
         for driver in matches:
             driver_msg = _format_driver_message(driver)
             await send_whatsapp_message(hitchhiker_phone, driver_msg)
-        
-        # Also notify drivers about the new hitchhiker
-        for driver in matches:
-            hitchhiker_msg = _format_hitchhiker_message(new_record, driver.get("destination"))
-            await send_whatsapp_message(driver["phone_number"], hitchhiker_msg)
+        logger.info(f"✅ Notified hitchhiker about {len(matches)} drivers")
 
 def _match_destination(dest1: str, dest2: str) -> bool:
     """Fuzzy match destinations (80%+ similarity)"""
@@ -323,6 +314,12 @@ async def _check_destination_compatibility(
         return False, None, None
     
     distance_from_origin = calculate_distance_between_points(driver_origin_coords, hitchhiker_coords)
+    
+    # Check if hitchhiker destination is the driver's origin (not a valid match)
+    # A hitchhiker needs to ARRIVE at their destination, not depart from it
+    if distance_from_origin < 0.5:  # Less than 500m = same location
+        logger.info(f"    ❌ Hitchhiker destination is driver's origin - not a valid match")
+        return False, None, None
     
     # 🆕 Calculate dynamic threshold based on distance from origin
     dynamic_threshold = calculate_dynamic_threshold(distance_from_origin)
@@ -419,9 +416,12 @@ def _format_driver_message(driver: Dict) -> str:
     else:
         time_info = ""
     
+    # Get driver name, handle None case
+    driver_name = driver.get('name') or 'נהג'
+    
     msg = f"""🚗 נמצא נהג!
 
-{driver.get('name', 'נהג')} נוסע ל{driver['destination']}
+{driver_name} נוסע ל{driver['destination']}
 {time_info}
 שעה: {driver['departure_time']}"""
     

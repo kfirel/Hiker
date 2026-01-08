@@ -505,6 +505,42 @@ async def calculate_and_save_route_background(
                 
                 if success:
                     logger.info(f"✅ Route saved in background for {ride_id}: {route_data['distance_km']:.1f}km")
+                    
+                    # 🆕 Re-run matching now that route is available
+                    try:
+                        logger.info(f"🔍 Re-running match search after route calculation...")
+                        from database import get_user_rides_and_requests
+                        from services.matching_service import find_matches_for_new_record, send_match_notifications
+                        
+                        # Get updated ride with route data
+                        user_data = await get_user_rides_and_requests(phone_number, collection_prefix)
+                        driver_rides = user_data.get("driver_rides", [])
+                        
+                        # Find the specific ride
+                        updated_ride = None
+                        for ride in driver_rides:
+                            if ride.get("id") == ride_id:
+                                updated_ride = ride
+                                break
+                        
+                        if updated_ride:
+                            # Add phone for matching
+                            updated_ride["phone_number"] = phone_number
+                            
+                            # Find matches with the new route
+                            matches = await find_matches_for_new_record("driver", updated_ride, collection_prefix)
+                            logger.info(f"🎯 Post-route match search: found {len(matches)} new matches")
+                            
+                            # Send notifications for new matches
+                            if matches:
+                                await send_match_notifications("driver", matches, updated_ride, send_whatsapp=True)
+                                logger.info(f"✅ Sent notifications for {len(matches)} post-route matches")
+                        else:
+                            logger.warning(f"⚠️ Could not find ride {ride_id} for post-route matching")
+                            
+                    except Exception as e:
+                        logger.error(f"❌ Error in post-route matching: {e}", exc_info=True)
+                    
                     return  # Success!
                 else:
                     raise Exception("Failed to save route to DB")

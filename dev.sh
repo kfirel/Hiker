@@ -109,3 +109,5 @@ trap "echo ''; echo 'Stopping services...'; kill $BACKEND_PID $FRONTEND_PID 2>/d
 # Keep script running
 wait
 
+
+

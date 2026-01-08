@@ -277,3 +277,5 @@ async def get_peak_hours(db: firestore.Client) -> List[Dict[str, Any]]:
         logger.error(f"❌ Error calculating peak hours: {e}")
         return []
 
+
+
