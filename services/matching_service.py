@@ -433,7 +433,7 @@ def _format_driver_message(driver: Dict) -> str:
     
     msg += f"""
 
-📱 טלפון: {driver['phone_number']}
+📱 טלפון: +{driver['phone_number']}
 
 בהצלחה! 🙂"""
     
@@ -466,7 +466,7 @@ def _format_hitchhiker_message(hitchhiker: Dict, destination: str) -> str:
     
     msg += f"""
 
-📱 טלפון: {hitchhiker['phone_number']}
+📱 טלפון: +{hitchhiker['phone_number']}
 
 בהצלחה! 🙂"""
     
