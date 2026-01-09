@@ -467,7 +467,8 @@ async def handle_update_user_records(phone_number: str, arguments: Dict, collect
     
     # Send match notifications AFTER the success message (with small delay)
     # Always send notifications - whatsapp_service will handle test users automatically
-    if matches and send_whatsapp:
+    # BUT: For drivers, skip initial notifications - they'll be sent after route calculation
+    if matches and send_whatsapp and role != "driver":
         import asyncio
         
         async def send_notifications_delayed():
@@ -475,6 +476,8 @@ async def handle_update_user_records(phone_number: str, arguments: Dict, collect
             await send_match_notifications(role, matches, record, send_whatsapp)
         
         asyncio.create_task(send_notifications_delayed())
+    elif matches and role == "driver":
+        logger.info(f"🚗 Skipping initial notifications for driver - will send after route calculation")
     
     return {"status": "success", "message": msg}
 
@@ -782,7 +785,8 @@ async def handle_update_user_record(phone_number: str, arguments: Dict, collecti
     msg += f"\n\n📋 הנסיעות שלך עכשיו:\n\n{list_msg}"
     
     # Send match notifications AFTER the success message (with small delay)
-    if matches:
+    # BUT: For drivers with route recalc pending, skip - notifications will be sent after route calculation
+    if matches and not (needs_route_recalc and role == "driver"):
         import asyncio
         
         async def send_notifications_delayed():
@@ -790,6 +794,8 @@ async def handle_update_user_record(phone_number: str, arguments: Dict, collecti
             await send_match_notifications(role, matches, updated_record, send_whatsapp)
         
         asyncio.create_task(send_notifications_delayed())
+    elif matches and needs_route_recalc and role == "driver":
+        logger.info(f"🚗 Skipping notifications for driver - will send after route recalculation")
     
     return {"status": "success", "message": msg}
 
