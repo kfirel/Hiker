@@ -1256,6 +1256,11 @@ async def send_sandbox_message(
             logger.info(f"   Step 3: New user, sending welcome...")
             welcome_msg = get_welcome_message(user_data.get("name"))
             await add_message_to_history(
+                request.phone_number,
+                "user",
+                request.message
+            )
+            await add_message_to_history(
                 request.phone_number, 
                 "assistant", 
                 welcome_msg
