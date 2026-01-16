@@ -6,6 +6,10 @@ import RideMapModal from '../components/Rides/RideMapModal';
 function RidesPage() {
   const [destination, setDestination] = useState('');
   const [selectedRide, setSelectedRide] = useState(null);
+  const [editingRide, setEditingRide] = useState(null);
+  const [editingType, setEditingType] = useState(null);
+  const [editForm, setEditForm] = useState({});
+  const [isSaving, setIsSaving] = useState(false);
   
   // Fetch rides
   const { data, isLoading, refetch } = useQuery({
@@ -75,21 +79,101 @@ function RidesPage() {
   const hitchhikers = data?.hitchhikers || [];
   const matchingParams = data?.matching_params || null;
 
+  const openEditModal = (ride, type) => {
+    setEditingRide(ride);
+    setEditingType(type);
+    setEditForm({
+      origin: ride.origin || '',
+      destination: ride.destination || '',
+      travel_date: ride.travel_date || '',
+      departure_time: ride.departure_time || '',
+      return_time: ride.return_time || '',
+      days_text: Array.isArray(ride.days) ? ride.days.join(', ') : '',
+      notes: ride.notes || '',
+      flexibility: ride.flexibility || 'flexible',
+    });
+  };
+
+  const closeEditModal = () => {
+    setEditingRide(null);
+    setEditingType(null);
+    setEditForm({});
+  };
+
+  const handleEditSave = async () => {
+    if (!editingRide || !editingType) {
+      return;
+    }
+
+    const updates = {};
+    const originalDays = Array.isArray(editingRide.days) ? editingRide.days.join(', ') : '';
+
+    if (editForm.origin !== (editingRide.origin || '')) {
+      updates.origin = editForm.origin;
+    }
+    if (editForm.destination !== (editingRide.destination || '')) {
+      updates.destination = editForm.destination;
+    }
+    if (editForm.travel_date !== (editingRide.travel_date || '')) {
+      updates.travel_date = editForm.travel_date || null;
+    }
+    if (editForm.departure_time !== (editingRide.departure_time || '')) {
+      updates.departure_time = editForm.departure_time || null;
+    }
+    if (editForm.return_time !== (editingRide.return_time || '')) {
+      updates.return_time = editForm.return_time || null;
+    }
+    if (editForm.notes !== (editingRide.notes || '')) {
+      updates.notes = editForm.notes || null;
+    }
+
+    if (editingType === 'driver') {
+      if (editForm.days_text !== originalDays) {
+        const days = editForm.days_text
+          .split(',')
+          .map((day) => day.trim())
+          .filter(Boolean);
+        updates.days = days.length > 0 ? days : null;
+      }
+    } else {
+      if (editForm.flexibility !== (editingRide.flexibility || 'flexible')) {
+        updates.flexibility = editForm.flexibility;
+      }
+    }
+
+    if (Object.keys(updates).length === 0) {
+      closeEditModal();
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      await ridesAPI.update(editingRide.phone_number, editingRide.id, editingType, updates);
+      await refetch();
+      closeEditModal();
+      alert('הנסיעה עודכנה בהצלחה');
+    } catch (error) {
+      alert('שגיאה בעדכון הנסיעה: ' + (error.response?.data?.detail || error.message));
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Header with Search */}
-      <div className="bg-white rounded-lg shadow p-6">
-        <div className="flex items-center justify-between gap-4 flex-wrap mb-4">
+      <div className="bg-white rounded-lg shadow p-4 sm:p-6">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
           <h3 className="text-xl font-bold text-gray-900">🚗 כל הנסיעות הפעילות</h3>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-col sm:flex-row items-stretch gap-3 w-full sm:w-auto">
             <button
               onClick={handleCalculateRoutes}
-              className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm font-medium whitespace-nowrap"
+              className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm font-medium whitespace-nowrap w-full sm:w-auto"
               title="חשב מסלולים לנסיעות ללא נתוני מסלול"
             >
               🗺️ חשב מסלולים
             </button>
-            <div className="flex-1 min-w-[200px] max-w-md">
+            <div className="flex-1 min-w-0 sm:min-w-[200px] sm:max-w-md">
               <input
                 type="text"
                 placeholder="סינון לפי יעד..."
@@ -101,7 +185,7 @@ function RidesPage() {
           </div>
         </div>
 
-        <div className="flex items-center gap-4 text-sm text-gray-600">
+        <div className="flex flex-wrap items-center gap-2 text-sm text-gray-600">
           <span className="bg-blue-50 px-3 py-1 rounded">
             🚗 {drivers.length} נהגים
           </span>
@@ -135,6 +219,7 @@ function RidesPage() {
                 <th className="text-right py-3 px-4 font-semibold text-gray-700">חזרה</th>
                 <th className="text-right py-3 px-4 font-semibold text-gray-700">הערות</th>
                 <th className="text-right py-3 px-4 font-semibold text-gray-700">נוצר</th>
+                <th className="text-right py-3 px-4 font-semibold text-gray-700">פעולות</th>
               </tr>
             </thead>
             <tbody>
@@ -168,6 +253,15 @@ function RidesPage() {
                   </td>
                   <td className="py-3 px-4 text-sm text-gray-600">
                     {ride.created_at ? new Date(ride.created_at).toLocaleDateString('he-IL') : '-'}
+                  </td>
+                  <td className="py-3 px-4" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      onClick={() => openEditModal(ride, 'driver')}
+                      className="text-blue-600 hover:text-blue-800 hover:bg-blue-50 p-2 rounded transition-colors"
+                      title="עריכת נסיעה"
+                    >
+                      ✏️
+                    </button>
                   </td>
                 </tr>
               ))}
@@ -206,6 +300,7 @@ function RidesPage() {
                 <th className="text-right py-3 px-4 font-semibold text-gray-700">גמישות</th>
                 <th className="text-right py-3 px-4 font-semibold text-gray-700">הערות</th>
                 <th className="text-right py-3 px-4 font-semibold text-gray-700">נוצר</th>
+                <th className="text-right py-3 px-4 font-semibold text-gray-700">פעולות</th>
               </tr>
             </thead>
             <tbody>
@@ -244,6 +339,15 @@ function RidesPage() {
                   <td className="py-3 px-4 text-sm text-gray-600">
                     {ride.created_at ? new Date(ride.created_at).toLocaleDateString('he-IL') : '-'}
                   </td>
+                  <td className="py-3 px-4" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      onClick={() => openEditModal(ride, 'hitchhiker')}
+                      className="text-blue-600 hover:text-blue-800 hover:bg-blue-50 p-2 rounded transition-colors"
+                      title="עריכת נסיעה"
+                    >
+                      ✏️
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -264,6 +368,136 @@ function RidesPage() {
           matchingParams={matchingParams}
           onClose={() => setSelectedRide(null)}
         />
+      )}
+
+      {editingRide && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={closeEditModal}>
+          <div
+            className="bg-white rounded-lg shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold">עריכת נסיעה</h3>
+              <button
+                type="button"
+                onClick={closeEditModal}
+                className="text-gray-500 hover:text-gray-700 text-xl"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <label className="block text-sm text-gray-700">
+                מוצא
+                <input
+                  type="text"
+                  value={editForm.origin || ''}
+                  onChange={(e) => setEditForm({ ...editForm, origin: e.target.value })}
+                  className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg"
+                />
+              </label>
+
+              <label className="block text-sm text-gray-700">
+                יעד
+                <input
+                  type="text"
+                  value={editForm.destination || ''}
+                  onChange={(e) => setEditForm({ ...editForm, destination: e.target.value })}
+                  className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg"
+                />
+              </label>
+
+              {editingType === 'driver' && (
+                <label className="block text-sm text-gray-700">
+                  ימים (מופרד בפסיקים)
+                  <input
+                    type="text"
+                    value={editForm.days_text || ''}
+                    onChange={(e) => setEditForm({ ...editForm, days_text: e.target.value })}
+                    className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg"
+                    placeholder="Sunday, Monday"
+                  />
+                </label>
+              )}
+
+              <label className="block text-sm text-gray-700">
+                תאריך
+                <input
+                  type="date"
+                  value={editForm.travel_date || ''}
+                  onChange={(e) => setEditForm({ ...editForm, travel_date: e.target.value })}
+                  className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg"
+                />
+              </label>
+
+              <label className="block text-sm text-gray-700">
+                שעה
+                <input
+                  type="time"
+                  value={editForm.departure_time || ''}
+                  onChange={(e) => setEditForm({ ...editForm, departure_time: e.target.value })}
+                  className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg"
+                />
+              </label>
+
+              {editingType === 'driver' && (
+                <label className="block text-sm text-gray-700">
+                  שעת חזרה
+                  <input
+                    type="time"
+                    value={editForm.return_time || ''}
+                    onChange={(e) => setEditForm({ ...editForm, return_time: e.target.value })}
+                    className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg"
+                  />
+                </label>
+              )}
+
+              {editingType === 'hitchhiker' && (
+                <label className="block text-sm text-gray-700">
+                  גמישות
+                  <select
+                    value={editForm.flexibility || 'flexible'}
+                    onChange={(e) => setEditForm({ ...editForm, flexibility: e.target.value })}
+                    className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg"
+                  >
+                    <option value="strict">מדויק</option>
+                    <option value="flexible">גמיש</option>
+                    <option value="very_flexible">גמיש מאוד</option>
+                  </select>
+                </label>
+              )}
+
+              <label className="block text-sm text-gray-700">
+                הערות
+                <textarea
+                  value={editForm.notes || ''}
+                  onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })}
+                  className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg"
+                  rows={3}
+                />
+              </label>
+            </div>
+
+            <div className="mt-6 flex flex-col sm:flex-row gap-3">
+              <button
+                type="button"
+                onClick={handleEditSave}
+                disabled={isSaving}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-300"
+              >
+                {isSaving ? 'שומר...' : 'שמור'}
+              </button>
+              <button
+                type="button"
+                onClick={closeEditModal}
+                className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
+              >
+                ביטול
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

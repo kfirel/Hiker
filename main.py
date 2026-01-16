@@ -123,6 +123,14 @@ frontend_dist = os.path.join(os.path.dirname(__file__), "frontend", "dist")
 frontend_index = os.path.join(frontend_dist, "index.html")
 
 if os.path.exists(frontend_dist):
+    @app.get("/admin/{full_path:path}")
+    async def serve_admin_app(full_path: str):
+        """Serve admin SPA with client-side routing support."""
+        file_path = os.path.join(frontend_dist, full_path)
+        if os.path.isfile(file_path):
+            return FileResponse(file_path)
+        return FileResponse(frontend_index)
+
     # Mount entire dist directory as static files under /admin
     # Using custom class for cache-busting headers
     app.mount("/admin", CacheBustedStaticFiles(directory=frontend_dist, html=True), name="admin_static")

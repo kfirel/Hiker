@@ -66,9 +66,9 @@ function UsersPage() {
   return (
     <div className="space-y-6">
       {/* Header with Search and Export */}
-      <div className="bg-white rounded-lg shadow p-6">
-        <div className="flex items-center justify-between gap-4 flex-wrap">
-          <div className="flex-1 min-w-[200px]">
+      <div className="bg-white rounded-lg shadow p-4 sm:p-6">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div className="flex-1 min-w-0">
             <input
               type="text"
               placeholder="חיפוש לפי טלפון או שם..."
@@ -78,11 +78,11 @@ function UsersPage() {
             />
           </div>
           
-          <div className="flex gap-2">
+          <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
             <select
               value={sortBy}
               onChange={(e) => setSortBy(e.target.value)}
-              className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary"
+              className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary w-full sm:w-auto"
             >
               <option value="last_seen">לפי תאריך אחרון</option>
               <option value="created_at">לפי תאריך הצטרפות</option>
@@ -91,14 +91,14 @@ function UsersPage() {
             
             <button
               onClick={() => setOrder(order === 'asc' ? 'desc' : 'asc')}
-              className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
+              className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 w-full sm:w-auto"
             >
               {order === 'asc' ? '↑' : '↓'}
             </button>
             
             <button
               onClick={handleExport}
-              className="px-4 py-2 bg-success text-white rounded-lg hover:bg-green-600 transition-colors"
+              className="px-4 py-2 bg-success text-white rounded-lg hover:bg-green-600 transition-colors w-full sm:w-auto"
             >
               📊 ייצוא CSV
             </button>

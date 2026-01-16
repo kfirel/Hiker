@@ -73,6 +73,8 @@ export const ridesAPI = {
   },
   delete: (phoneNumber, rideId, rideType) => 
     apiClient.delete(`/rides/${phoneNumber}/${rideId}?ride_type=${rideType}`),
+  update: (phoneNumber, rideId, rideType, updates) =>
+    apiClient.put(`/rides/${phoneNumber}/${rideId}?ride_type=${rideType}`, updates),
   exportCSV: (rideType = null) => {
     const query = rideType ? `?ride_type=${rideType}` : '';
     return apiClient.get(`/rides/export/csv${query}`, { responseType: 'blob' });

@@ -2,9 +2,31 @@
 import logging
 from typing import Dict, List
 import uuid
+from datetime import timedelta
 from utils.timezone_utils import israel_now_isoformat
 
 logger = logging.getLogger(__name__)
+
+def _normalize_location(value: str) -> str:
+    return value.strip().lower().replace('"', "").replace("'", "")
+
+def _is_gvaram_location(value: str) -> bool:
+    if not value:
+        return False
+    normalized = _normalize_location(value)
+    return "גברעם" in normalized or "gvaram" in normalized
+
+def _infer_travel_date_from_time(time_str: str) -> str:
+    from utils import get_israel_now
+    try:
+        hours, minutes = map(int, time_str.split(":"))
+    except Exception:
+        return ""
+    now = get_israel_now()
+    candidate = now.replace(hour=hours, minute=minutes, second=0, microsecond=0)
+    if candidate <= now:
+        candidate = candidate + timedelta(days=1)
+    return candidate.strftime("%Y-%m-%d")
 
 def _round_flex_minutes(minutes: int) -> str:
     """
@@ -197,8 +219,20 @@ async def handle_update_user_records(phone_number: str, arguments: Dict, collect
     has_days = arguments.get("days")
     
     if not has_travel_date and not has_days:
-        logger.warning(f"⚠️ Missing travel_date and days! Arguments: {arguments}")
-        return {"status": "error", "message": "חסר תאריך או ימים"}
+        inferred_date = _infer_travel_date_from_time(departure_time)
+        if inferred_date:
+            arguments["travel_date"] = inferred_date
+            has_travel_date = inferred_date
+        else:
+            logger.warning(f"⚠️ Missing travel_date and days! Arguments: {arguments}")
+            return {"status": "error", "message": "חסר תאריך או ימים"}
+
+    # Enforce Gvaram-only origin/destination
+    if not (_is_gvaram_location(origin) or _is_gvaram_location(destination)):
+        return {
+            "status": "error",
+            "message": "המערכת תומכת רק בנסיעות מ/אל גברעם. האם אתה יוצא מגברעם או מגיע לגברעם?"
+        }
     
     # NEW: Check for conflicts (only for one-time trips with travel_date)
     travel_date = arguments.get("travel_date")
@@ -741,6 +775,15 @@ async def handle_update_user_record(phone_number: str, arguments: Dict, collecti
     logger.info(f"🔍 DEBUG update_user_record: Updating {role} record {record_number} (id={record_id}) with: {updates}")
     logger.info(f"   Before update: {record.get('destination')} at {record.get('departure_time')}")
     
+    # Enforce Gvaram-only origin/destination for updates
+    candidate_origin = updates.get("origin", record.get("origin", ""))
+    candidate_destination = updates.get("destination", record.get("destination", ""))
+    if not (_is_gvaram_location(candidate_origin) or _is_gvaram_location(candidate_destination)):
+        return {
+            "status": "error",
+            "message": "המערכת תומכת רק בנסיעות מ/אל גברעם. עדכן מוצא או יעד בהתאם."
+        }
+
     # Update in DB
     success = await update_user_ride_or_request(phone_number, role, record_id, updates, collection_prefix)
     

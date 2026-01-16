@@ -77,6 +77,17 @@ class CreateTestUserRequest(BaseModel):
     hitchhiker_requests: Optional[List[dict]] = None
 
 
+class UpdateRideRequest(BaseModel):
+    origin: Optional[str] = None
+    destination: Optional[str] = None
+    travel_date: Optional[str] = None
+    departure_time: Optional[str] = None
+    return_time: Optional[str] = None
+    days: Optional[List[str]] = None
+    notes: Optional[str] = None
+    flexibility: Optional[str] = None
+
+
 # ============================================================================
 # API ENDPOINTS (Recommended for automation/testing)
 # ============================================================================
@@ -852,6 +863,96 @@ async def delete_ride(
         raise
     except Exception as e:
         logger.error(f"Error deleting ride: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/rides/{phone_number}/{ride_id}")
+async def update_ride(
+    phone_number: str,
+    ride_id: str,
+    ride_type: str,
+    request: UpdateRideRequest,
+    _: bool = Depends(verify_admin_token)
+):
+    """
+    Update a specific ride (driver or hitchhiker).
+    """
+    from database import get_db, update_user_ride_or_request
+    from services.route_service import calculate_and_save_route_background, geocode_address
+    import asyncio
+
+    if ride_type not in ("driver", "hitchhiker"):
+        raise HTTPException(status_code=400, detail="Invalid ride_type")
+
+    updates = {k: v for k, v in request.dict().items() if v is not None}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    db = get_db()
+    if not db:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    try:
+        doc_ref = db.collection("users").document(phone_number)
+        doc = doc_ref.get()
+        if not doc.exists:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        user_data = doc.to_dict()
+        rides_list = user_data.get(
+            "driver_rides" if ride_type == "driver" else "hitchhiker_requests",
+            []
+        )
+        ride = next((r for r in rides_list if r.get("id") == ride_id), None)
+        if not ride:
+            raise HTTPException(status_code=404, detail="Ride not found")
+
+        origin_val = updates.get("origin", ride.get("origin", "גברעם"))
+        dest_val = updates.get("destination", ride.get("destination"))
+
+        # Handle route recalculation for drivers if route details change
+        route_changed = ride_type == "driver" and (
+            "origin" in updates or "destination" in updates
+        )
+        if route_changed:
+            updates["route_calculation_pending"] = True
+            updates["route_coordinates_flat"] = None
+            updates["route_num_points"] = None
+            updates["route_distance_km"] = None
+            updates["route_threshold_km"] = None
+
+        # Update coordinates for hitchhikers when origin/destination changes
+        if ride_type == "hitchhiker" and ("origin" in updates or "destination" in updates):
+            if origin_val and dest_val:
+                origin_coords = geocode_address(origin_val)
+                dest_coords = geocode_address(dest_val)
+                if origin_coords and dest_coords:
+                    updates["origin_coordinates"] = list(origin_coords)
+                    updates["destination_coordinates"] = list(dest_coords)
+
+        success = await update_user_ride_or_request(
+            phone_number, ride_type, ride_id, updates
+        )
+        if not success:
+            raise HTTPException(status_code=500, detail="Update failed")
+
+        # Kick off route calculation in background for drivers
+        if route_changed and origin_val and dest_val:
+            asyncio.create_task(
+                calculate_and_save_route_background(
+                    phone_number,
+                    ride_id,
+                    origin_val,
+                    dest_val
+                )
+            )
+
+        return {"success": True, "message": "Ride updated successfully"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating ride: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

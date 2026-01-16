@@ -5,11 +5,23 @@ Calculate various metrics for the admin dashboard
 
 import logging
 from typing import Dict, List, Any, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from collections import Counter
 from google.cloud import firestore
 
 logger = logging.getLogger(__name__)
+
+def _parse_iso_to_utc(value: str) -> Optional[datetime]:
+    """Parse ISO datetime and return UTC-aware datetime."""
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except Exception:
+        return None
 
 
 async def get_overview_stats(db: firestore.Client) -> Dict[str, Any]:
@@ -27,7 +39,7 @@ async def get_overview_stats(db: firestore.Client) -> Dict[str, Any]:
         - matches_month: Matches this month
     """
     try:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         seven_days_ago = now - timedelta(days=7)
         thirty_days_ago = now - timedelta(days=30)
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -49,23 +61,15 @@ async def get_overview_stats(db: firestore.Client) -> Dict[str, Any]:
             
             # Check if new user (created in last 7 days)
             created_at = user_data.get("created_at", "")
-            if created_at:
-                try:
-                    created_date = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-                    if created_date >= seven_days_ago:
-                        new_users_7d += 1
-                except:
-                    pass
+            created_date = _parse_iso_to_utc(created_at)
+            if created_date and created_date >= seven_days_ago:
+                new_users_7d += 1
             
             # Check if active (last_seen in last 30 days)
             last_seen = user_data.get("last_seen", "")
-            if last_seen:
-                try:
-                    last_seen_date = datetime.fromisoformat(last_seen.replace("Z", "+00:00"))
-                    if last_seen_date >= thirty_days_ago:
-                        active_users_30d += 1
-                except:
-                    pass
+            last_seen_date = _parse_iso_to_utc(last_seen)
+            if last_seen_date and last_seen_date >= thirty_days_ago:
+                active_users_30d += 1
             
             # Count active rides
             driver_rides = user_data.get("driver_rides", [])
@@ -124,7 +128,7 @@ async def get_trends_stats(db: firestore.Client, days: int = 30) -> Dict[str, An
         - popular_destinations: List of {destination, count} for top destinations
     """
     try:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         start_date = now - timedelta(days=days)
         
         # Initialize counters
@@ -140,27 +144,19 @@ async def get_trends_stats(db: firestore.Client, days: int = 30) -> Dict[str, An
             
             # Count users by creation date
             created_at = user_data.get("created_at", "")
-            if created_at:
-                try:
-                    created_date = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-                    if created_date >= start_date:
-                        day_key = created_date.strftime("%Y-%m-%d")
-                        users_by_day[day_key] += 1
-                except:
-                    pass
+            created_date = _parse_iso_to_utc(created_at)
+            if created_date and created_date >= start_date:
+                day_key = created_date.strftime("%Y-%m-%d")
+                users_by_day[day_key] += 1
             
             # Count rides by creation date and destinations
             driver_rides = user_data.get("driver_rides", [])
             for ride in driver_rides:
                 ride_created = ride.get("created_at", "")
-                if ride_created:
-                    try:
-                        ride_date = datetime.fromisoformat(ride_created.replace("Z", "+00:00"))
-                        if ride_date >= start_date:
-                            day_key = ride_date.strftime("%Y-%m-%d")
-                            rides_by_day[day_key] += 1
-                    except:
-                        pass
+                ride_date = _parse_iso_to_utc(ride_created)
+                if ride_date and ride_date >= start_date:
+                    day_key = ride_date.strftime("%Y-%m-%d")
+                    rides_by_day[day_key] += 1
                 
                 # Count destinations (only active rides)
                 if ride.get("active", True):
@@ -171,14 +167,10 @@ async def get_trends_stats(db: firestore.Client, days: int = 30) -> Dict[str, An
             hitchhiker_requests = user_data.get("hitchhiker_requests", [])
             for request in hitchhiker_requests:
                 request_created = request.get("created_at", "")
-                if request_created:
-                    try:
-                        request_date = datetime.fromisoformat(request_created.replace("Z", "+00:00"))
-                        if request_date >= start_date:
-                            day_key = request_date.strftime("%Y-%m-%d")
-                            rides_by_day[day_key] += 1
-                    except:
-                        pass
+                request_date = _parse_iso_to_utc(request_created)
+                if request_date and request_date >= start_date:
+                    day_key = request_date.strftime("%Y-%m-%d")
+                    rides_by_day[day_key] += 1
                 
                 # Count destinations (only active requests)
                 if request.get("active", True):
