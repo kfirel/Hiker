@@ -13,10 +13,12 @@ logger = logging.getLogger(__name__)
 
 async def send_whatsapp_message(phone_number: str, message: str) -> bool:
     """
-    Send WhatsApp message to user (or save to history for test users)
+    Send WhatsApp message to user and save to chat history
     
     For test users (972500000001-004), messages are saved to chat history
     instead of being sent via WhatsApp. This allows testing in the Sandbox UI.
+    
+    For regular users, messages are sent via WhatsApp AND saved to chat history.
     
     Args:
         phone_number: Recipient's phone number
@@ -26,6 +28,7 @@ async def send_whatsapp_message(phone_number: str, message: str) -> bool:
         True if successful, False otherwise
     """
     from config import TEST_USERS
+    from database import add_message_to_history
     
     try:
         # Check if this is a test user
@@ -36,7 +39,6 @@ async def send_whatsapp_message(phone_number: str, message: str) -> bool:
             
             # Save to regular chat history instead of sending WhatsApp
             # Test users are in the same database as regular users
-            from database import add_message_to_history
             await add_message_to_history(
                 phone_number,
                 "assistant",
@@ -71,6 +73,11 @@ async def send_whatsapp_message(phone_number: str, message: str) -> bool:
         response.raise_for_status()
         
         logger.info(f"✅ WhatsApp API Response: {response.status_code}")
+        
+        # Save to chat history after successful send
+        await add_message_to_history(phone_number, "assistant", message)
+        logger.info(f"✅ Message saved to chat history")
+        
         return True
     
     except Exception as e:

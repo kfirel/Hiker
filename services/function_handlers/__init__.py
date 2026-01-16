@@ -6,6 +6,16 @@ from utils.timezone_utils import israel_now_isoformat
 
 logger = logging.getLogger(__name__)
 
+def _round_flex_minutes(minutes: int) -> str:
+    """
+    Round flexibility to clean hours or minutes for display.
+    """
+    if minutes >= 60:
+        hours = max(1, int(round(minutes / 60)))
+        return f"{hours} ש'"
+    rounded = max(10, int(round(minutes / 10)) * 10)
+    return f"{rounded} דק'"
+
 def _format_user_records_list(driver_rides: List[Dict], hitchhiker_requests: List[Dict]) -> str:
     """
     Format complete list of user's records with clear numbers
@@ -29,7 +39,7 @@ def _format_user_records_list(driver_rides: List[Dict], hitchhiker_requests: Lis
     }
     
     if not driver_rides and not hitchhiker_requests:
-        return "(אין נסיעות פעילות)"
+        return ""
     
     msg = ""
     
@@ -86,14 +96,7 @@ def _format_user_records_list(driver_rides: List[Dict], hitchhiker_requests: Lis
                     flex_text = "מאוד גמיש, ±6 ש'"
                 else:  # flexible
                     flex_emoji = "🟡"
-                    hours = tolerance_minutes // 60
-                    minutes = tolerance_minutes % 60
-                    if hours > 0 and minutes > 0:
-                        flex_text = f"גמיש, ±{hours} ש' {minutes} דק'"
-                    elif hours > 0:
-                        flex_text = f"גמיש, ±{hours} ש'"
-                    else:
-                        flex_text = f"גמיש, ±{minutes} דק'"
+                    flex_text = f"גמיש, ±{_round_flex_minutes(tolerance_minutes)}"
             else:
                 # Fallback if geocoding fails
                 if flexibility_level == "strict":
@@ -106,7 +109,8 @@ def _format_user_records_list(driver_rides: List[Dict], hitchhiker_requests: Lis
                     flex_emoji = "🟡"
                     flex_text = "גמיש"
             
-            msg += f"{i}) מ{origin} ל{destination} - {req['travel_date']} בשעה {req['departure_time']} {flex_emoji} ({flex_text})\n"
+            travel_date = req.get("travel_date") or "ללא תאריך"
+            msg += f"{i}) מ{origin} ל{destination} - {travel_date} בשעה {req['departure_time']} {flex_emoji} ({flex_text})\n"
     
     return msg.strip()
 
@@ -342,7 +346,10 @@ async def handle_update_user_records(phone_number: str, arguments: Dict, collect
             data.get("hitchhiker_requests", [])
         )
         
-        msg += f"\n\n📋 הנסיעות שלך עכשיו:\n\n{list_msg}"
+        if list_msg:
+            msg += f"\n\n📋 הנסיעות שלך עכשיו:\n\n{list_msg}"
+        elif role == "hitchhiker":
+            msg += "\n\n💡 המערכת מחפשת עבורך טרמפ ותעדכן אותך מיד כשנמצא אחד!"
         
         # Send match notifications AFTER the success message (with small delay)
         if matches_outbound or matches_return:
@@ -376,7 +383,9 @@ async def handle_update_user_records(phone_number: str, arguments: Dict, collect
                 data.get("hitchhiker_requests", [])
             )
             duplicate_msg = result.get("message", "הנסיעה כבר קיימת")
-            return {"status": "info", "message": f"{duplicate_msg}\n\n📋 הנסיעות שלך עכשיו:\n\n{list_msg}"}
+            if list_msg:
+                return {"status": "info", "message": f"{duplicate_msg}\n\n📋 הנסיעות שלך עכשיו:\n\n{list_msg}"}
+            return {"status": "info", "message": duplicate_msg}
         return {"status": "error", "message": result.get("message", "שמירה נכשלה")}
     
     logger.info(f"✅ Saved successfully!")
@@ -438,7 +447,10 @@ async def handle_update_user_records(phone_number: str, arguments: Dict, collect
         data.get("hitchhiker_requests", [])
     )
     
-    msg += f"\n\n📋 הנסיעות שלך עכשיו:\n\n{list_msg}"
+    if list_msg:
+        msg += f"\n\n📋 הנסיעות שלך עכשיו:\n\n{list_msg}"
+    elif role == "hitchhiker":
+        msg += "\n\n💡 המערכת מחפשת עבורך טרמפ ותעדכן אותך מיד כשנמצא אחד!"
     
     # For test users: include match details in the main message
     # ONLY for hitchhikers - drivers should NOT see hitchhiker details
@@ -490,13 +502,20 @@ async def handle_view_user_records(phone_number: str, collection_prefix: str = "
     hitchhikers = data.get("hitchhiker_requests", [])
     
     if not drivers and not hitchhikers:
-        return {"status": "success", "message": "אין לך רשומות פעילות כרגע"}
+        return {
+            "status": "success",
+            "message": (
+                "אין לך נסיעות פעילות כרגע.\n"
+                "כדי לבקש טרמפ כתוב למשל: \"צריך טרמפ לתל אביב מחר ב-13\"\n"
+                "כדי להציע נסיעה כתוב למשל: \"נוסע מחר לתל אביב ב-10\""
+            )
+        }
     
     msg = _format_user_records_list(drivers, hitchhikers)
     
     # Add helpful note if user has hitchhiker requests
     if hitchhikers:
-        msg += "\n\n💡 המערכת מחפשת התאמות אוטומטית. נודיע לך ברגע שנהג יתפנה!"
+        msg += "\n\n💡 המערכת מחפשת עבורך טרמפ ותעדכן אותך מיד כשנמצא אחד!"
     
     return {"status": "success", "message": msg}
 
@@ -550,9 +569,14 @@ async def handle_delete_user_record(phone_number: str, arguments: Dict, collecti
         data.get("hitchhiker_requests", [])
     )
     
+    if list_msg:
+        return {
+            "status": "success",
+            "message": f"{record_type} {record_number}) נמחק/ה בהצלחה! ✅\n\n📋 הנסיעות שלך עכשיו:\n\n{list_msg}"
+        }
     return {
         "status": "success",
-        "message": f"{record_type} {record_number}) נמחק/ה בהצלחה! ✅\n\n📋 הנסיעות שלך עכשיו:\n\n{list_msg}"
+        "message": f"{record_type} {record_number}) נמחק/ה בהצלחה! ✅\n\nאין נסיעות פעילות"
     }
 
 async def handle_delete_all_user_records(phone_number: str, arguments: Dict, collection_prefix: str = "") -> Dict:
@@ -596,7 +620,7 @@ async def handle_delete_all_user_records(phone_number: str, arguments: Dict, col
         total_deleted = deleted_drivers + deleted_hitchhikers
         return {
             "status": "success",
-            "message": f"כל הנסיעות נמחקו בהצלחה! ✅\n🚗 {deleted_drivers} טרמפים נמחקו\n🎒 {deleted_hitchhikers} בקשות נמחקו\n\n📋 אין לך נסיעות פעילות"
+            "message": f"כל הנסיעות נמחקו בהצלחה! ✅\n🚗 {deleted_drivers} טרמפים נמחקו\n🎒 {deleted_hitchhikers} בקשות נמחקו\n\nאין נסיעות פעילות"
         }
     
     # Handle specific role
@@ -626,10 +650,10 @@ async def handle_delete_all_user_records(phone_number: str, arguments: Dict, col
         data.get("hitchhiker_requests", [])
     )
     
-    if list_msg == "(אין נסיעות פעילות)":
+    if not list_msg:
         return {
             "status": "success",
-            "message": f"כל ה{record_type} נמחקו בהצלחה! ✅ ({deleted_count} נמחקו)\n\n📋 אין לך נסיעות פעילות"
+            "message": f"כל ה{record_type} נמחקו בהצלחה! ✅ ({deleted_count} נמחקו)\n\nאין נסיעות פעילות"
         }
     
     return {
@@ -782,7 +806,10 @@ async def handle_update_user_record(phone_number: str, arguments: Dict, collecti
         data.get("hitchhiker_requests", [])
     )
     
-    msg += f"\n\n📋 הנסיעות שלך עכשיו:\n\n{list_msg}"
+    if list_msg:
+        msg += f"\n\n📋 הנסיעות שלך עכשיו:\n\n{list_msg}"
+    elif role == "hitchhiker":
+        msg += "\n\n💡 המערכת מחפשת עבורך טרמפ ותעדכן אותך מיד כשנמצא אחד!"
     
     # Send match notifications AFTER the success message (with small delay)
     # BUT: For drivers with route recalc pending, skip - notifications will be sent after route calculation
@@ -818,7 +845,8 @@ async def handle_show_help(phone_number: str, collection_prefix: str = "") -> Di
     if driver_rides or hitchhiker_requests:
         msg = "📋 הנסיעות שלך:\n\n"
         msg += _format_user_records_list(driver_rides, hitchhiker_requests)
-        
+        if hitchhiker_requests:
+            msg += "\n\n💡 המערכת מחפשת עבורך טרמפ ותעדכן אותך מיד כשנמצא אחד!"
         return {
             "status": "success",
             "message": msg

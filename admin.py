@@ -1304,9 +1304,12 @@ async def send_sandbox_message(
                 }
         
         # Process with AI (same as regular users)
-        logger.info(f"   Step 4: Calling AI service...")
+        logger.info(f"   Step 4: Saving user message and calling AI service...")
         logger.info(f"   User data keys: {list(user_data.keys())}")
         logger.info(f"   Chat history length: {len(user_data.get('chat_history', []))}")
+        
+        # Save user message to history before AI processing
+        await add_message_to_history(request.phone_number, "user", request.message)
         
         # Use regular AI processing - WhatsApp messages are handled automatically
         # (test users will have messages saved to history instead of WhatsApp)

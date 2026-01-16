@@ -484,11 +484,9 @@ async def process_message_with_ai(phone_number: str, message_text: str, user_dat
             reply_for_history = reply
         
         # Send reply to user (clean version)
+        # Note: User message already saved in webhook handler
+        # send_whatsapp_message auto-saves assistant message to history
         await send_whatsapp_message(phone_number, reply_to_user)
-        
-        # Save to history (with metadata for AI)
-        await add_message_to_history(phone_number, "user", message_text)
-        await add_message_to_history(phone_number, "assistant", reply_for_history)
         
     except Exception as e:
         logger.error(f"AI error: {e}", exc_info=True)
@@ -680,14 +678,9 @@ async def process_message_with_ai_sandbox(phone_number: str, message_text: str, 
             reply_to_user = reply
             reply_for_history = reply
         
-        # Save to sandbox history (with metadata for AI)
-        logger.info(f"   AI Step 11: Saving to chat history...")
-        await add_message_to_history_sandbox(phone_number, "user", message_text, collection_prefix)
-        logger.info(f"   AI Step 12: User message saved")
-        await add_message_to_history_sandbox(phone_number, "assistant", reply_for_history, collection_prefix)
-        logger.info(f"   AI Step 13: Assistant message saved (metadata included for AI)")
-        
-        logger.info(f"   AI Step 14: ✅ AI Service COMPLETE, returning clean reply to user (length: {len(reply_to_user)})")
+        # Note: User message saved in admin.py before calling this function
+        # Assistant message will be saved in admin.py after getting the response
+        logger.info(f"   AI Step 11: ✅ AI Service COMPLETE, returning clean reply to user (length: {len(reply_to_user)})")
         return reply_to_user
         
     except Exception as e:

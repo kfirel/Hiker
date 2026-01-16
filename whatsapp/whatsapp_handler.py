@@ -62,6 +62,10 @@ async def handle_whatsapp_message(message: Dict[str, Any]) -> bool:
             message_text = message["text"]["body"]
             logger.info(f"💬 Text: {message_text}")
             
+            # Save incoming user message to history
+            # (admin commands and new user handling will send responses via send_whatsapp_message which auto-saves)
+            await add_message_to_history(from_number, "user", message_text)
+            
             # Check for admin commands (new secure system)
             db = get_db()
             if db and message_text.startswith("/a"):
@@ -83,8 +87,8 @@ async def handle_whatsapp_message(message: Dict[str, Any]) -> bool:
             # Send welcome message to new users and skip AI processing
             if is_new_user:
                 welcome_msg = get_welcome_message(user_name)
+                # send_whatsapp_message now auto-saves to history
                 await send_whatsapp_message(from_number, welcome_msg)
-                await add_message_to_history(from_number, "assistant", welcome_msg)
                 logger.info(f"👋 משתמש חדש: {user_display}")
                 # Remove from processing
                 async with _processing_lock:
