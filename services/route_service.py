@@ -533,7 +533,13 @@ async def calculate_and_save_route_background(
                             
                             # Send notifications for new matches
                             if matches:
-                                await send_match_notifications("driver", matches, updated_ride, send_whatsapp=True)
+                                await send_match_notifications(
+                                    "driver",
+                                    matches,
+                                    updated_ride,
+                                    send_whatsapp=True,
+                                    collection_prefix=collection_prefix
+                                )
                                 logger.info(f"✅ Sent notifications for {len(matches)} post-route matches")
                         else:
                             logger.warning(f"⚠️ Could not find ride {ride_id} for post-route matching")

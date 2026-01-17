@@ -392,9 +392,21 @@ async def handle_update_user_records(phone_number: str, arguments: Dict, collect
             async def send_notifications_delayed():
                 await asyncio.sleep(0.5)  # Small delay to ensure success message is sent first
                 if matches_outbound:
-                    await send_match_notifications(role, matches_outbound, outbound_record, send_whatsapp)
+                    await send_match_notifications(
+                        role,
+                        matches_outbound,
+                        outbound_record,
+                        send_whatsapp,
+                        collection_prefix
+                    )
                 if matches_return:
-                    await send_match_notifications(role, matches_return, return_record, send_whatsapp)
+                    await send_match_notifications(
+                        role,
+                        matches_return,
+                        return_record,
+                        send_whatsapp,
+                        collection_prefix
+                    )
             
             asyncio.create_task(send_notifications_delayed())
         
@@ -519,7 +531,13 @@ async def handle_update_user_records(phone_number: str, arguments: Dict, collect
         
         async def send_notifications_delayed():
             await asyncio.sleep(0.5)  # Small delay to ensure success message is sent first
-            await send_match_notifications(role, matches, record, send_whatsapp)
+            await send_match_notifications(
+                role,
+                matches,
+                record,
+                send_whatsapp,
+                collection_prefix
+            )
         
         asyncio.create_task(send_notifications_delayed())
     elif matches and role == "driver":
@@ -861,7 +879,13 @@ async def handle_update_user_record(phone_number: str, arguments: Dict, collecti
         
         async def send_notifications_delayed():
             await asyncio.sleep(0.5)  # Small delay to ensure success message is sent first
-            await send_match_notifications(role, matches, updated_record, send_whatsapp)
+            await send_match_notifications(
+                role,
+                matches,
+                updated_record,
+                send_whatsapp,
+                collection_prefix
+            )
         
         asyncio.create_task(send_notifications_delayed())
     elif matches and needs_route_recalc and role == "driver":

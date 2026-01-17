@@ -6,6 +6,58 @@ from rapidfuzz import fuzz
 
 logger = logging.getLogger(__name__)
 
+async def _log_matches(
+    role: str,
+    matches: List[Dict],
+    new_record: Dict,
+    collection_prefix: str = ""
+) -> None:
+    from database import get_db
+    from utils.timezone_utils import israel_now_isoformat
+
+    db = get_db()
+    if not db:
+        logger.warning("⚠️ Database not available, skipping match logging")
+        return
+
+    matcher_role = role
+    matched_role = "hitchhiker" if role == "driver" else "driver"
+    environment = collection_prefix or "production"
+
+    for match in matches:
+        match_details = match.get("_match_details")
+        match_kind = "on_route" if match_details else "exact_match"
+
+        record = {
+            "timestamp": israel_now_isoformat(),
+            "match_type": matcher_role,
+            "match_kind": match_kind,
+            "environment": environment,
+            "matcher_phone": new_record.get("phone_number"),
+            "matcher_name": new_record.get("name"),
+            "matcher_role": matcher_role,
+            "matched_phone": match.get("phone_number"),
+            "matched_name": match.get("name"),
+            "matched_role": matched_role,
+            "origin": new_record.get("origin"),
+            "destination": new_record.get("destination"),
+            "travel_date": new_record.get("travel_date"),
+            "departure_time": new_record.get("departure_time"),
+            "matched_origin": match.get("origin"),
+            "matched_destination": match.get("destination"),
+            "matched_travel_date": match.get("travel_date"),
+            "matched_departure_time": match.get("departure_time"),
+            "route_distance_km": new_record.get("route_distance_km") or match.get("route_distance_km"),
+            "match_details": match_details,
+            "source_ride_id": new_record.get("id"),
+            "matched_ride_id": match.get("ride_id") or match.get("request_id"),
+        }
+
+        try:
+            db.collection("matches").add(record)
+        except Exception as e:
+            logger.error(f"❌ Failed to log match: {e}")
+
 async def find_matches_for_new_record(role: str, record_data: Dict, collection_prefix: str = "") -> List[Dict]:
     """Main matching function - called after every update"""
     try:
@@ -199,7 +251,13 @@ async def find_hitchhikers_for_driver(driver: Dict, collection_prefix: str = "")
     logger.info(f"Found {len(matches)} hitchhikers for driver")
     return matches
 
-async def send_match_notifications(role: str, matches: List[Dict], new_record: Dict, send_whatsapp: bool = True):
+async def send_match_notifications(
+    role: str,
+    matches: List[Dict],
+    new_record: Dict,
+    send_whatsapp: bool = True,
+    collection_prefix: str = ""
+):
     """Send match notifications"""
     from whatsapp.whatsapp_service import send_whatsapp_message
     
@@ -207,6 +265,9 @@ async def send_match_notifications(role: str, matches: List[Dict], new_record: D
         logger.info(f"❌ No matches found")
         return
     
+    # Log matches for management (always, even in sandbox)
+    await _log_matches(role, matches, new_record, collection_prefix)
+
     # Skip WhatsApp messages in sandbox mode
     if not send_whatsapp:
         logger.info(f"🧪 Sandbox mode: Found {len(matches)} matches but skipping WhatsApp notifications")
