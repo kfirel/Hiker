@@ -1049,6 +1049,67 @@ async def export_rides_csv(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/matches")
+async def list_matches(
+    limit: int = 100,
+    offset: int = 0,
+    match_type: Optional[str] = None,
+    destination: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    _: bool = Depends(verify_admin_token)
+):
+    """
+    List match logs with optional filters.
+    """
+    from database import get_db
+
+    db = get_db()
+    if not db:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    try:
+        query = db.collection("matches").order_by("timestamp", direction=firestore.Query.DESCENDING)
+
+        if match_type:
+            query = query.where("match_type", "==", match_type)
+        if start_date:
+            query = query.where("timestamp", ">=", start_date)
+        if end_date:
+            query = query.where("timestamp", "<=", end_date)
+
+        docs = query.stream()
+        matches = []
+        destination_filter = destination.strip().lower() if destination else None
+
+        for doc in docs:
+            data = doc.to_dict()
+            data["id"] = doc.id
+
+            if destination_filter:
+                dest = (data.get("destination") or "").lower()
+                matched_dest = (data.get("matched_destination") or "").lower()
+                if destination_filter not in dest and destination_filter not in matched_dest:
+                    continue
+
+            matches.append(data)
+
+        total = len(matches)
+        matches_page = matches[offset:offset + limit]
+
+        return {
+            "matches": matches_page,
+            "count": len(matches_page),
+            "total": total,
+            "offset": offset,
+            "limit": limit
+        }
+
+    except Exception as e:
+        logger.error(f"Error listing matches: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ============================================================================
 # WHATSAPP COMMAND HANDLERS (For convenience via WhatsApp)
 # ============================================================================

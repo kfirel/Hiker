@@ -4,6 +4,7 @@ const pageTitles = {
   '/dashboard': 'דשבורד',
   '/users': 'משתמשים',
   '/rides': 'נסיעות',
+  '/matches': 'התאמות',
   '/errors': 'שגיאות ולוגים',
 };
 

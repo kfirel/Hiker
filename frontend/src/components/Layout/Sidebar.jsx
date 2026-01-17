@@ -4,6 +4,7 @@ const menuItems = [
   { path: '/dashboard', label: 'דשבורד', icon: '📊' },
   { path: '/users', label: 'משתמשים', icon: '👥' },
   { path: '/rides', label: 'נסיעות', icon: '🚗' },
+  { path: '/matches', label: 'התאמות', icon: '🎯' },
   { path: '/errors', label: 'שגיאות ולוגים', icon: '⚠️' },
   { path: '/sandbox', label: 'Sandbox', icon: '🧪' },
 ];

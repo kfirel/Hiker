@@ -7,6 +7,7 @@ import ErrorsPage from './pages/ErrorsPage';
 import SandboxPage from './pages/SandboxPage';
 import LoginPage from './pages/LoginPage';
 import TokenCheck from './components/TokenCheck';
+import MatchesPage from './pages/MatchesPage';
 
 function App() {
   return (
@@ -21,6 +22,7 @@ function App() {
         <Route path="dashboard" element={<DashboardPage />} />
         <Route path="users" element={<UsersPage />} />
         <Route path="rides" element={<RidesPage />} />
+        <Route path="matches" element={<MatchesPage />} />
         <Route path="errors" element={<ErrorsPage />} />
         <Route path="sandbox" element={<SandboxPage />} />
       </Route>

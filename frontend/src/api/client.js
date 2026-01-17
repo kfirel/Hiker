@@ -83,5 +83,12 @@ export const ridesAPI = {
     apiClient.post('/rides/calculate-routes'),
 };
 
+export const matchesAPI = {
+  list: (params = {}) => {
+    const query = new URLSearchParams(params).toString();
+    return apiClient.get(`/matches?${query}`);
+  },
+};
+
 export default apiClient;
 
