@@ -1071,16 +1071,18 @@ async def list_matches(
     try:
         query = db.collection("matches").order_by("timestamp", direction=firestore.Query.DESCENDING)
 
-        if match_type:
+        if match_type in ("driver", "hitchhiker"):
             query = query.where("match_type", "==", match_type)
-        if start_date:
+        if start_date and start_date != "undefined":
             query = query.where("timestamp", ">=", start_date)
-        if end_date:
+        if end_date and end_date != "undefined":
             query = query.where("timestamp", "<=", end_date)
 
         docs = query.stream()
         matches = []
-        destination_filter = destination.strip().lower() if destination else None
+        destination_filter = None
+        if destination and destination != "undefined":
+            destination_filter = destination.strip().lower()
 
         for doc in docs:
             data = doc.to_dict()

@@ -85,7 +85,12 @@ export const ridesAPI = {
 
 export const matchesAPI = {
   list: (params = {}) => {
-    const query = new URLSearchParams(params).toString();
+    const cleaned = Object.fromEntries(
+      Object.entries(params).filter(
+        ([, value]) => value !== undefined && value !== null && value !== ''
+      )
+    );
+    const query = new URLSearchParams(cleaned).toString();
     return apiClient.get(`/matches?${query}`);
   },
 };
