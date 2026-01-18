@@ -89,10 +89,8 @@ async def handle_whatsapp_message(message: Dict[str, Any]) -> bool:
                 welcome_msg = get_welcome_message(user_name)
                 # Save the user's first message so history is complete
                 await add_message_to_history(from_number, "user", message_text)
-                # send_whatsapp_message auto-saves for test users only
+                # send_whatsapp_message saves assistant message to history
                 await send_whatsapp_message(from_number, welcome_msg)
-                if from_number not in TEST_USERS:
-                    await add_message_to_history(from_number, "assistant", welcome_msg)
                 logger.info(f"👋 משתמש חדש: {user_display}")
                 # Remove from processing
                 async with _processing_lock:
